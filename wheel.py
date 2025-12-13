@@ -400,12 +400,13 @@ class WheelOfFortune:
         self.last_pointer_index = index
         winner = self.items[index]
         lowered_winner = winner.strip().lower()
-        is_multiplier = lowered_winner == "2x"
+        multiplier_match = re.fullmatch(r"(\d+)x", lowered_winner)
+        multiplier_value = int(multiplier_match.group(1)) if multiplier_match else None
         is_relax = lowered_winner == "relax"
         is_speed_up = lowered_winner == "speed up"
 
-        if is_multiplier:
-            self.pending_multiplier *= 2
+        if multiplier_value is not None:
+            self.pending_multiplier *= multiplier_value
             self.consecutive_multiplier_count += 1
             self.status.config(text=f"Result: {winner}. Press space to spin again.")
             self.schedule_auto_spin()
