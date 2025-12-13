@@ -167,11 +167,13 @@ class WheelOfFortune:
         self.mercy_configs.clear()
         self.special_targets_by_name.clear()
         self.special_counts_by_name.clear()
-        seen_modules: dict[str, dict[str, int]] = {}
+        seen_modules: dict[str, dict[str, int | bool]] = {}
 
         parsed_items: list[str] = []
 
-        for idx, raw_item in enumerate(self.items):
+        parsed_entries: list[tuple[str, dict[str, int | bool], bool]] = []
+        non_missing_count = 0
+        for raw_item in self.items:
             base_name, module_texts = self.extract_base_and_modules(raw_item)
             modules = self.interpret_modules(module_texts)
             if base_name in seen_modules and seen_modules[base_name] != modules:
@@ -186,13 +188,26 @@ class WheelOfFortune:
                 return
 
             seen_modules[base_name] = copy.deepcopy(modules)
-            color = self.colors[idx] if idx < len(self.colors) else None
+            is_missing = bool(modules.get("missing"))
+            parsed_entries.append((base_name, modules, is_missing))
+            if not is_missing:
+                non_missing_count += 1
 
-            self.register_modules(idx, base_name, modules, color)
+        self.colors = self.generate_colors(non_missing_count)
 
-            self.base_names.append(base_name)
-            self.item_modules.append(modules)
-            parsed_items.append(self.format_item_label(idx))
+        color_idx = 0
+        for base_name, modules, is_missing in parsed_entries:
+            color = self.colors[color_idx] if not is_missing else None
+
+            if not is_missing:
+                current_index = len(parsed_items)
+                self.register_modules(current_index, base_name, modules, color)
+                self.base_names.append(base_name)
+                self.item_modules.append(modules)
+                parsed_items.append(self.format_item_label(current_index))
+                color_idx += 1
+            else:
+                self.register_modules(None, base_name, modules, color)
 
         self.items = parsed_items
 
@@ -203,8 +218,8 @@ class WheelOfFortune:
         module_texts = [match.strip("() ") for match in module_matches]
         return base_name or item.strip(), module_texts
 
-    def interpret_modules(self, module_texts: list[str]) -> dict[str, int]:
-        modules: dict[str, int] = {}
+    def interpret_modules(self, module_texts: list[str]) -> dict[str, int | bool]:
+        modules: dict[str, int | bool] = {}
         for module_text in module_texts:
             lower = module_text.lower()
 
@@ -224,10 +239,22 @@ class WheelOfFortune:
                 modules["bpm_boost"] = int(bpm_match.group(1))
                 continue
 
+            if lower == "fragile":
+                modules["fragile"] = True
+                continue
+
+            if lower == "missing":
+                modules["missing"] = True
+                continue
+
         return modules
 
     def register_modules(
-        self, idx: int, base_name: str, modules: dict[str, int], color: str | None
+        self,
+        idx: int | None,
+        base_name: str,
+        modules: dict[str, int | bool],
+        color: str | None,
     ) -> None:
         if "mercy_initial" in modules and "mercy_repeat" in modules:
             self.mercy_configs.append(
@@ -618,6 +645,11 @@ class WheelOfFortune:
             index, display_winner, applied_multiplier
         )
         self.pending_multiplier = 1
+
+        if "fragile" in modules and not ended:
+            message = self.handle_fragile_result(index, display_winner)
+            ended = self.game_over
+
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
 
@@ -684,6 +716,27 @@ class WheelOfFortune:
 
     def update_special_label(self, index: int) -> None:
         self.items[index] = self.format_item_label(index)
+        self.draw_wheel()
+
+    def handle_fragile_result(self, index: int, display_winner: str) -> str:
+        self.remove_item(index)
+        if not self.items:
+            end_message = f"{display_winner} was destroyed. No items remain."
+            self.end_game(end_message)
+            return end_message
+
+        return (
+            f"{display_winner} was destroyed after being chosen. Press space to spin again."
+        )
+
+    def remove_item(self, index: int) -> None:
+        if index < 0 or index >= len(self.items):
+            return
+
+        del self.items[index]
+        del self.base_names[index]
+        del self.item_modules[index]
+        del self.colors[index]
         self.draw_wheel()
 
     def duplicate_mercy_item(self, config: dict[str, int | str]) -> None:
