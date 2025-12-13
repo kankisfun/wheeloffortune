@@ -84,6 +84,7 @@ class WheelOfFortune:
     def draw_wheel(self) -> None:
         self.canvas.delete("all")
         sector_angle = 360 / len(self.items)
+        pointer_angle = 90
         bbox = (
             self.center - self.radius,
             self.center - self.radius,
@@ -91,8 +92,11 @@ class WheelOfFortune:
             self.center + self.radius,
         )
 
+        text_items = []
         for index, label in enumerate(self.items):
-            start_angle = -90 + index * sector_angle + self.angle_offset
+            start_angle = (
+                pointer_angle - sector_angle / 2 + index * sector_angle + self.angle_offset
+            )
             self.canvas.create_arc(
                 bbox,
                 start=start_angle,
@@ -101,16 +105,22 @@ class WheelOfFortune:
                 outline="white",
                 width=2,
             )
-            angle_rad = math.radians(start_angle + sector_angle / 2)
+
+            segment_center = start_angle + sector_angle / 2
+            angle_rad = math.radians(segment_center)
             text_radius = self.radius * 0.65
             x = self.center + text_radius * math.cos(angle_rad)
-            y = self.center + text_radius * math.sin(angle_rad)
+            y = self.center - text_radius * math.sin(angle_rad)
+            text_items.append((x, y, label, segment_center - 90))
+
+        for x, y, label, angle in text_items:
             self.canvas.create_text(
                 x,
                 y,
                 text=label,
                 font=("Arial", 14, "bold"),
                 fill="white",
+                angle=angle,
             )
 
         pointer_size = 18
@@ -169,10 +179,9 @@ class WheelOfFortune:
     def finish_spin(self) -> None:
         self.spinning = False
         sector_angle = 360 / len(self.items)
-        pointer_angle = -90
-        relative_pointer = (pointer_angle - self.angle_offset) % 360
-        normalized = (relative_pointer + 90) % 360
-        index = int(normalized // sector_angle)
+        pointer_angle = 90
+        relative = (sector_angle / 2 - self.angle_offset) % 360
+        index = int(relative // sector_angle)
         winner = self.items[index]
         self.status.config(text=f"Result: {winner}. Press space to spin again.")
 
