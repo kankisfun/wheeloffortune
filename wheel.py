@@ -190,13 +190,9 @@ class WheelOfFortune:
 
             self.register_modules(idx, base_name, modules, color)
 
-            label = base_name
-            if "special_target" in modules:
-                label = f"{base_name} (1/{modules['special_target']})"
-
             self.base_names.append(base_name)
             self.item_modules.append(modules)
-            parsed_items.append(label)
+            parsed_items.append(self.format_item_label(idx))
 
         self.items = parsed_items
 
@@ -251,6 +247,15 @@ class WheelOfFortune:
                 self.special_targets_by_name[base_name] = target
                 self.special_counts_by_name[base_name] = 0
 
+    def format_item_label(self, idx: int) -> str:
+        label = self.base_names[idx]
+        modules = self.item_modules[idx]
+        if "special_target" in modules:
+            target = modules["special_target"]
+            current = self.special_counts.get(idx, 0)
+            label = f"{label} ({current}/{target})"
+        return label
+
     def add_item_with_modules(
         self,
         base_name: str,
@@ -258,25 +263,22 @@ class WheelOfFortune:
         color: str | None = None,
         register_mercy: bool = False,
     ) -> None:
-        label = base_name
-        if "special_target" in modules:
-            label = f"{base_name} (1/{modules['special_target']})"
-
         if color is None:
             palette = self.generate_colors(len(self.items) + 1)
             color = palette[len(self.items)]
 
         self.base_names.append(base_name)
         self.item_modules.append(copy.deepcopy(modules))
-        self.items.append(label)
         self.colors.append(str(color))
 
-        new_index = len(self.items) - 1
+        new_index = len(self.items)
         if "special_target" in modules:
             target = modules["special_target"]
             if base_name not in self.special_targets_by_name:
                 self.special_targets_by_name[base_name] = target
                 self.special_counts_by_name[base_name] = 0
+
+        self.items.append(self.format_item_label(new_index))
 
         if (
             register_mercy
@@ -585,6 +587,7 @@ class WheelOfFortune:
         multiplier_match = re.fullmatch(r"(\d+)x", lowered_winner)
         multiplier_value = int(multiplier_match.group(1)) if multiplier_match else None
         is_relax = lowered_winner == "relax"
+        applied_multiplier = self.pending_multiplier
 
         if multiplier_value is not None:
             self.pending_multiplier *= multiplier_value
@@ -593,24 +596,25 @@ class WheelOfFortune:
             return
 
         if is_relax:
-            duration = 5 * self.pending_multiplier
+            duration = 5 * applied_multiplier
+            self.pending_multiplier = 1
             self.start_relax_timer(duration)
             return
 
         display_winner = winner
-        if self.pending_multiplier > 1:
-            display_winner = f"{self.pending_multiplier}x {winner}"
-            self.pending_multiplier = 1
+        if applied_multiplier > 1:
+            display_winner = f"{applied_multiplier}x {winner}"
 
         module_messages = []
         if "bpm_boost" in modules:
-            boost = modules["bpm_boost"]
+            boost = modules["bpm_boost"] * applied_multiplier
             self.bps += boost
             self.update_bpm_display()
             self.schedule_heartbeat()
             module_messages.append(f"BPM increased by {boost} to {self.bps}.")
 
-        ended, message = self.handle_special_result(index, display_winner)
+        ended, message = self.handle_special_result(index, display_winner, applied_multiplier)
+        self.pending_multiplier = 1
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
 
@@ -671,6 +675,10 @@ class WheelOfFortune:
         if self.break_timer_job is not None:
             self.root.after_cancel(self.break_timer_job)
             self.break_timer_job = None
+
+    def update_special_label(self, index: int) -> None:
+        self.items[index] = self.format_item_label(index)
+        self.draw_wheel()
 
     def duplicate_mercy_item(self, config: dict[str, int | str]) -> None:
         base_name = str(config["base_name"])
