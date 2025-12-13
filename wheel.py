@@ -59,6 +59,9 @@ class WheelOfFortune:
         self.angle_offset = 0.0
         self.spinning = False
         self.pending_multiplier = 1
+        self.break_active = False
+        self.break_end_time = 0.0
+        self.break_timer_job: str | None = None
         self.jitter = 0.02
         self.initial_speed = 0.0
         self.deceleration = 0.0
@@ -212,7 +215,7 @@ class WheelOfFortune:
 
     def schedule_auto_spin(self) -> None:
         self.cancel_auto_spin()
-        if self.auto_spin_var.get():
+        if self.auto_spin_var.get() and not self.break_active:
             self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
 
     def cancel_auto_spin(self) -> None:
@@ -229,6 +232,8 @@ class WheelOfFortune:
         self.schedule_auto_spin()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
+        if self.break_active:
+            return
         if self.spinning:
             return
 
@@ -281,11 +286,18 @@ class WheelOfFortune:
         index = self.pointer_index()
         self.last_pointer_index = index
         winner = self.items[index]
-        is_multiplier = winner.strip().lower() == "2x"
+        lowered_winner = winner.strip().lower()
+        is_multiplier = lowered_winner == "2x"
+        is_relax = lowered_winner == "relax"
 
         if is_multiplier:
             self.pending_multiplier *= 2
             self.status.config(text=f"Result: {winner}. Press space to spin again.")
+            return
+
+        if is_relax:
+            duration = 5 * self.pending_multiplier
+            self.start_relax_timer(duration)
             return
 
         display_winner = winner
@@ -294,6 +306,29 @@ class WheelOfFortune:
             self.pending_multiplier = 1
 
         self.status.config(text=f"Result: {display_winner}. Press space to spin again.")
+
+    def start_relax_timer(self, duration: float) -> None:
+        self.break_active = True
+        self.break_end_time = time.perf_counter() + duration
+        self.cancel_auto_spin()
+        self.update_relax_timer()
+
+    def update_relax_timer(self) -> None:
+        remaining = self.break_end_time - time.perf_counter()
+        if remaining <= 0:
+            self.break_active = False
+            self.break_timer_job = None
+            if self.auto_spin_var.get():
+                self.status.config(text="Relax over. Spinning automatically.")
+                self.start_spin()
+                self.schedule_auto_spin()
+            else:
+                self.status.config(text="Relax over. Press space to spin.")
+            return
+
+        seconds_left = max(1, math.ceil(remaining))
+        self.status.config(text=f"Relax: {seconds_left} seconds remaining.")
+        self.break_timer_job = self.root.after(200, self.update_relax_timer)
 
     def run(self) -> None:
         if self.items:
