@@ -40,6 +40,10 @@ class WheelOfFortune:
         self.auto_spin_var = tk.BooleanVar(value=False)
         bottom_bar = tk.Frame(self.root)
         bottom_bar.pack(fill="x", pady=5)
+        self.restart_button = tk.Button(
+            bottom_bar, text="Restart", command=self.restart_game, state="disabled"
+        )
+        self.restart_button.pack(side="left", padx=10)
         self.auto_spin_check = tk.Checkbutton(
             bottom_bar,
             text="Automatic spinning",
@@ -56,6 +60,9 @@ class WheelOfFortune:
             return
 
         self.colors = self.generate_colors(len(self.items))
+        self.special_targets = self.parse_special_targets(self.items)
+        self.special_counts: dict[str, int] = {key: 0 for key in self.special_targets}
+        self.game_over = False
         self.angle_offset = 0.0
         self.spinning = False
         self.pending_multiplier = 1
@@ -206,6 +213,10 @@ class WheelOfFortune:
         return int(relative // sector_angle)
 
     def toggle_auto_spin(self) -> None:
+        if self.game_over:
+            self.auto_spin_var.set(False)
+            self.status.config(text="Game over. Press Restart to play again.")
+            return
         if self.auto_spin_var.get():
             self.status.config(text="Automatic spinning enabled. Press space to spin manually.")
             self.schedule_auto_spin()
@@ -215,7 +226,7 @@ class WheelOfFortune:
 
     def schedule_auto_spin(self) -> None:
         self.cancel_auto_spin()
-        if self.auto_spin_var.get() and not self.break_active:
+        if self.auto_spin_var.get() and not self.break_active and not self.game_over:
             self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
 
     def cancel_auto_spin(self) -> None:
@@ -225,13 +236,16 @@ class WheelOfFortune:
 
     def auto_spin_tick(self) -> None:
         self.auto_spin_job = None
-        if not self.auto_spin_var.get():
+        if not self.auto_spin_var.get() or self.game_over:
             return
         if not self.spinning:
             self.start_spin()
         self.schedule_auto_spin()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
+        if self.game_over:
+            self.status.config(text="Game over. Press Restart to play again.")
+            return
         if self.break_active:
             return
         if self.spinning:
@@ -300,12 +314,52 @@ class WheelOfFortune:
             self.start_relax_timer(duration)
             return
 
+        self.handle_special_win(winner)
+        if self.game_over:
+            return
+
         display_winner = winner
         if self.pending_multiplier > 1:
             display_winner = f"{self.pending_multiplier}x {winner}"
             self.pending_multiplier = 1
 
         self.status.config(text=f"Result: {display_winner}. Press space to spin again.")
+
+    def handle_special_win(self, winner: str) -> None:
+        base_key = self.base_label(winner)
+        if base_key not in self.special_targets:
+            return
+
+        self.special_counts[base_key] += 1
+        target = self.special_targets[base_key]
+        if self.special_counts[base_key] >= target:
+            base_name = winner.rsplit("(", 1)[0].strip()
+            self.game_over = True
+            self.cancel_auto_spin()
+            self.cancel_break_timer()
+            self.auto_spin_var.set(False)
+            self.auto_spin_check.config(state="disabled")
+            self.restart_button.config(state="normal")
+            self.status.config(text=f"{base_name} was chosen {target} times")
+
+    def parse_special_targets(self, items: list[str]) -> dict[str, int]:
+        targets: dict[str, int] = {}
+        for label in items:
+            if "(1/" not in label:
+                continue
+            try:
+                base, fraction = label.rsplit("(", 1)
+                numerator, denominator = fraction.strip(" )").split("/")
+                if numerator.strip() != "1":
+                    continue
+                target_value = int(denominator.strip())
+                targets[self.base_label(base)] = target_value
+            except (ValueError, IndexError):
+                continue
+        return targets
+
+    def base_label(self, label: str) -> str:
+        return label.split("(", 1)[0].strip().lower()
 
     def start_relax_timer(self, duration: float) -> None:
         self.break_active = True
@@ -329,6 +383,27 @@ class WheelOfFortune:
         seconds_left = max(1, math.ceil(remaining))
         self.status.config(text=f"Relax: {seconds_left} seconds remaining.")
         self.break_timer_job = self.root.after(200, self.update_relax_timer)
+
+    def cancel_break_timer(self) -> None:
+        if self.break_timer_job is not None:
+            self.root.after_cancel(self.break_timer_job)
+            self.break_timer_job = None
+
+    def restart_game(self) -> None:
+        self.cancel_auto_spin()
+        self.cancel_break_timer()
+        self.auto_spin_var.set(False)
+        self.auto_spin_check.config(state="normal")
+        self.special_counts = {key: 0 for key in self.special_targets}
+        self.game_over = False
+        self.spinning = False
+        self.pending_multiplier = 1
+        self.break_active = False
+        self.break_end_time = 0.0
+        self.angle_offset = 0.0
+        self.status.config(text="Press space to spin")
+        self.restart_button.config(state="disabled")
+        self.draw_wheel()
 
     def run(self) -> None:
         if self.items:
