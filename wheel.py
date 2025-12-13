@@ -1,5 +1,6 @@
 import math
 import random
+import re
 import time
 import tkinter as tk
 from pathlib import Path
@@ -49,6 +50,13 @@ class WheelOfFortune:
         )
         self.auto_spin_check.pack(side="right", padx=10)
 
+        self.restart_button = tk.Button(
+            bottom_bar,
+            text="Restart",
+            command=self.restart_game,
+        )
+        self.restart_button.pack(side="right", padx=10)
+
         self.heartbeat_check = tk.Checkbutton(
             bottom_bar,
             text="Heartbeat sound",
@@ -81,8 +89,15 @@ class WheelOfFortune:
         self.click_sound = self.load_click_sound()
         self.heartbeat_sound = self.load_heartbeat_sound()
 
-        self.bps = 60
+        self.initial_bps = 60
+        self.bps = self.initial_bps
         self.consecutive_multiplier_count = 0
+        self.special_targets: dict[int, int] = {}
+        self.special_names: dict[int, str] = {}
+        self.special_counts: dict[int, int] = {}
+        self.game_over = False
+
+        self.parse_special_items()
 
         self.root.bind("<space>", self.start_spin)
         self.draw_wheel()
@@ -125,6 +140,18 @@ class WheelOfFortune:
         for idx in range(count):
             colors.append(palette[idx % len(palette)])
         return colors
+
+    def parse_special_items(self) -> None:
+        pattern = re.compile(r"^(?P<name>.+?)\s*\(\s*1\s*/\s*(?P<target>\d+)\s*\)\s*$")
+        for idx, item in enumerate(self.items):
+            match = pattern.match(item)
+            if not match:
+                continue
+            target = int(match.group("target"))
+            name = match.group("name").strip()
+            self.special_targets[idx] = target
+            self.special_names[idx] = name or item
+            self.special_counts[idx] = 0
 
     def load_click_sound(self):  # type: ignore[override]
         path = Path(__file__).with_name("click.wav")
@@ -275,7 +302,7 @@ class WheelOfFortune:
 
     def schedule_auto_spin(self) -> None:
         self.cancel_auto_spin()
-        if self.auto_spin_var.get() and not self.break_active:
+        if self.auto_spin_var.get() and not self.break_active and not self.game_over:
             self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
 
     def schedule_heartbeat(self) -> None:
@@ -298,6 +325,8 @@ class WheelOfFortune:
         self.auto_spin_job = None
         if not self.auto_spin_var.get():
             return
+        if self.game_over:
+            return
         if not self.spinning:
             self.start_spin()
         self.schedule_auto_spin()
@@ -308,6 +337,9 @@ class WheelOfFortune:
         self.schedule_heartbeat()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
+        if self.game_over:
+            self.status.config(text="Game over. Press Restart to play again.")
+            return
         if self.break_active:
             return
         if self.spinning:
@@ -399,7 +431,27 @@ class WheelOfFortune:
             display_winner = f"{self.pending_multiplier}x {winner}"
             self.pending_multiplier = 1
 
-        self.status.config(text=f"Result: {display_winner}. Press space to spin again.")
+        ended, message = self.handle_special_result(index, display_winner)
+        if not ended:
+            self.status.config(text=message)
+
+    def handle_special_result(self, index: int, display_winner: str) -> tuple[bool, str]:
+        if index not in self.special_targets:
+            return False, f"Result: {display_winner}. Press space to spin again."
+
+        self.special_counts[index] += 1
+        target = self.special_targets[index]
+        name = self.special_names.get(index, self.items[index])
+        if self.special_counts[index] >= target:
+            message = f"{name} was chosen {target} times"
+            self.end_game(message)
+            return True, message
+
+        current = self.special_counts[index]
+        return (
+            False,
+            f"Result: {display_winner}. {name} chosen {current}/{target}. Press space to spin again.",
+        )
 
     def start_relax_timer(self, duration: float) -> None:
         self.break_active = True
@@ -423,6 +475,38 @@ class WheelOfFortune:
         seconds_left = max(1, math.ceil(remaining))
         self.status.config(text=f"Relax: {seconds_left} seconds remaining.")
         self.break_timer_job = self.root.after(200, self.update_relax_timer)
+
+    def end_game(self, message: str) -> None:
+        self.game_over = True
+        self.auto_spin_var.set(False)
+        self.cancel_auto_spin()
+        self.cancel_break_timer()
+        self.break_active = False
+        self.status.config(text=message)
+
+    def cancel_break_timer(self) -> None:
+        if self.break_timer_job is not None:
+            self.root.after_cancel(self.break_timer_job)
+            self.break_timer_job = None
+
+    def restart_game(self) -> None:
+        self.cancel_auto_spin()
+        self.cancel_heartbeat()
+        self.cancel_break_timer()
+        self.game_over = False
+        self.spinning = False
+        self.pending_multiplier = 1
+        self.consecutive_multiplier_count = 0
+        self.special_counts = {idx: 0 for idx in self.special_targets}
+        self.bps = self.initial_bps
+        self.angle_offset = 0.0
+        self.break_active = False
+        self.break_end_time = 0.0
+        self.auto_spin_var.set(False)
+        self.last_pointer_index = self.pointer_index()
+        self.draw_wheel()
+        self.schedule_heartbeat()
+        self.status.config(text="Press space to spin")
 
     def run(self) -> None:
         if self.items:
