@@ -45,6 +45,7 @@ class WheelOfFortune:
         self.colors = self.generate_colors(len(self.items))
         self.angle_offset = 0.0
         self.spinning = False
+        self.pending_multiplier = 1
         self.jitter = 0.02
         self.initial_speed = 0.0
         self.deceleration = 0.0
@@ -241,7 +242,19 @@ class WheelOfFortune:
         index = self.pointer_index()
         self.last_pointer_index = index
         winner = self.items[index]
-        self.status.config(text=f"Result: {winner}. Press space to spin again.")
+        is_multiplier = winner.strip().lower() == "2x"
+
+        if is_multiplier:
+            self.pending_multiplier *= 2
+            self.status.config(text=f"Result: {winner}. Press space to spin again.")
+            return
+
+        display_winner = winner
+        if self.pending_multiplier > 1:
+            display_winner = f"{self.pending_multiplier}x {winner}"
+            self.pending_multiplier = 1
+
+        self.status.config(text=f"Result: {display_winner}. Press space to spin again.")
 
     def run(self) -> None:
         if self.items:
