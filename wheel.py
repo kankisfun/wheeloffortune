@@ -93,6 +93,7 @@ class WheelOfFortune:
 
         self.mercy_configs: list[dict[str, int | str]] = []
         self.mercy_jobs: list[str] = []
+        self.mercy_started = False
 
         self.base_names: list[str] = []
         self.item_modules: list[dict[str, int]] = []
@@ -466,6 +467,13 @@ class WheelOfFortune:
                 pass
         self.mercy_jobs.clear()
 
+    def start_mercy_timers_if_needed(self) -> None:
+        if self.mercy_started:
+            return
+
+        self.mercy_started = True
+        self.schedule_mercy_items()
+
     def schedule_mercy_items(self) -> None:
         self.cancel_mercy_jobs()
         for config in self.mercy_configs:
@@ -514,6 +522,7 @@ class WheelOfFortune:
         if self.spinning:
             return
 
+        self.start_mercy_timers_if_needed()
         self.spinning = True
         self.spin_start = time.perf_counter()
         self.last_update = self.spin_start
@@ -669,7 +678,7 @@ class WheelOfFortune:
         self.items = list(self.original_items)
         self.colors = self.generate_colors(len(self.items))
         self.parse_items_and_modules()
-        self.schedule_mercy_items()
+        self.mercy_started = False
         self.game_over = False
         self.spinning = False
         self.pending_multiplier = 1
