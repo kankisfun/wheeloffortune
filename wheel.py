@@ -286,17 +286,18 @@ class WheelOfFortune:
         index = self.pointer_index()
         self.last_pointer_index = index
         winner = self.items[index]
-        is_multiplier = winner.strip().lower() == "2x"
-        is_break = winner.strip().lower() == "break"
+        lowered_winner = winner.strip().lower()
+        is_multiplier = lowered_winner == "2x"
+        is_relax = lowered_winner == "relax"
 
         if is_multiplier:
             self.pending_multiplier *= 2
             self.status.config(text=f"Result: {winner}. Press space to spin again.")
             return
 
-        if is_break:
+        if is_relax:
             duration = 5 * self.pending_multiplier
-            self.start_break_timer(duration)
+            self.start_relax_timer(duration)
             return
 
         display_winner = winner
@@ -306,28 +307,28 @@ class WheelOfFortune:
 
         self.status.config(text=f"Result: {display_winner}. Press space to spin again.")
 
-    def start_break_timer(self, duration: float) -> None:
+    def start_relax_timer(self, duration: float) -> None:
         self.break_active = True
         self.break_end_time = time.perf_counter() + duration
         self.cancel_auto_spin()
-        self.update_break_timer()
+        self.update_relax_timer()
 
-    def update_break_timer(self) -> None:
+    def update_relax_timer(self) -> None:
         remaining = self.break_end_time - time.perf_counter()
         if remaining <= 0:
             self.break_active = False
             self.break_timer_job = None
             if self.auto_spin_var.get():
-                self.status.config(text="Break over. Spinning automatically.")
+                self.status.config(text="Relax over. Spinning automatically.")
                 self.start_spin()
                 self.schedule_auto_spin()
             else:
-                self.status.config(text="Break over. Press space to spin.")
+                self.status.config(text="Relax over. Press space to spin.")
             return
 
         seconds_left = max(1, math.ceil(remaining))
-        self.status.config(text=f"Break: {seconds_left} seconds remaining.")
-        self.break_timer_job = self.root.after(200, self.update_break_timer)
+        self.status.config(text=f"Relax: {seconds_left} seconds remaining.")
+        self.break_timer_job = self.root.after(200, self.update_relax_timer)
 
     def run(self) -> None:
         if self.items:
