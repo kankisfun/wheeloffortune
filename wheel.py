@@ -37,6 +37,19 @@ class WheelOfFortune:
         self.status = tk.Label(self.root, text="Press space to spin", font=("Arial", 14))
         self.status.pack(pady=10)
 
+        self.auto_spin_var = tk.BooleanVar(value=False)
+        bottom_bar = tk.Frame(self.root)
+        bottom_bar.pack(fill="x", pady=5)
+        self.auto_spin_check = tk.Checkbutton(
+            bottom_bar,
+            text="Automatic spinning",
+            variable=self.auto_spin_var,
+            command=self.toggle_auto_spin,
+        )
+        self.auto_spin_check.pack(side="right", padx=10)
+
+        self.auto_spin_job: str | None = None
+
         self.items = self.prompt_for_items()
         if not self.items:
             self.root.destroy()
@@ -188,6 +201,32 @@ class WheelOfFortune:
         sector_angle = 360 / len(self.items)
         relative = (sector_angle / 2 - self.angle_offset) % 360
         return int(relative // sector_angle)
+
+    def toggle_auto_spin(self) -> None:
+        if self.auto_spin_var.get():
+            self.status.config(text="Automatic spinning enabled. Press space to spin manually.")
+            self.schedule_auto_spin()
+        else:
+            self.status.config(text="Press space to spin")
+            self.cancel_auto_spin()
+
+    def schedule_auto_spin(self) -> None:
+        self.cancel_auto_spin()
+        if self.auto_spin_var.get():
+            self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
+
+    def cancel_auto_spin(self) -> None:
+        if self.auto_spin_job is not None:
+            self.root.after_cancel(self.auto_spin_job)
+            self.auto_spin_job = None
+
+    def auto_spin_tick(self) -> None:
+        self.auto_spin_job = None
+        if not self.auto_spin_var.get():
+            return
+        if not self.spinning:
+            self.start_spin()
+        self.schedule_auto_spin()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
         if self.spinning:
