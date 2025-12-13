@@ -38,6 +38,7 @@ class WheelOfFortune:
         self.status.pack(pady=10)
 
         self.auto_spin_var = tk.BooleanVar(value=False)
+        self.heartbeat_enabled_var = tk.BooleanVar(value=True)
         bottom_bar = tk.Frame(self.root)
         bottom_bar.pack(fill="x", pady=5)
         self.auto_spin_check = tk.Checkbutton(
@@ -48,7 +49,16 @@ class WheelOfFortune:
         )
         self.auto_spin_check.pack(side="right", padx=10)
 
+        self.heartbeat_check = tk.Checkbutton(
+            bottom_bar,
+            text="Heartbeat sound",
+            variable=self.heartbeat_enabled_var,
+            command=self.toggle_heartbeat,
+        )
+        self.heartbeat_check.pack(side="left", padx=10)
+
         self.auto_spin_job: str | None = None
+        self.heartbeat_job: str | None = None
 
         self.items = self.prompt_for_items()
         if not self.items:
@@ -69,10 +79,15 @@ class WheelOfFortune:
         self.last_update = 0.0
         self.last_pointer_index = 0
         self.click_sound = self.load_click_sound()
+        self.heartbeat_sound = self.load_heartbeat_sound()
+
+        self.bps = 60
+        self.consecutive_multiplier_count = 0
 
         self.root.bind("<space>", self.start_spin)
         self.draw_wheel()
         self.last_pointer_index = self.pointer_index()
+        self.schedule_heartbeat()
 
     def prompt_for_items(self) -> list[str]:
         path = filedialog.askopenfilename(
@@ -127,6 +142,22 @@ class WheelOfFortune:
 
         return None
 
+    def load_heartbeat_sound(self):  # type: ignore[override]
+        path = Path(__file__).with_name("Heartbeat.wav")
+        if not path.exists():
+            return None
+
+        if simpleaudio is not None:
+            try:
+                return simpleaudio.WaveObject.from_wave_file(str(path))
+            except Exception:
+                return None
+
+        if winsound is not None:
+            return path
+
+        return None
+
     def play_click_sound(self) -> None:
         if self.click_sound is None:
             return
@@ -142,6 +173,29 @@ class WheelOfFortune:
             try:
                 winsound.PlaySound(
                     str(self.click_sound),
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
+                )
+            except Exception:
+                pass
+
+    def play_heartbeat_sound(self) -> None:
+        if not self.heartbeat_enabled_var.get():
+            return
+
+        if self.heartbeat_sound is None:
+            return
+
+        if simpleaudio is not None and hasattr(self.heartbeat_sound, "play"):
+            try:
+                self.heartbeat_sound.play()
+            except Exception:
+                pass
+            return
+
+        if winsound is not None:
+            try:
+                winsound.PlaySound(
+                    str(self.heartbeat_sound),
                     winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
                 )
             except Exception:
@@ -213,15 +267,32 @@ class WheelOfFortune:
             self.status.config(text="Press space to spin")
             self.cancel_auto_spin()
 
+    def toggle_heartbeat(self) -> None:
+        if self.heartbeat_enabled_var.get():
+            self.schedule_heartbeat()
+        else:
+            self.cancel_heartbeat()
+
     def schedule_auto_spin(self) -> None:
         self.cancel_auto_spin()
         if self.auto_spin_var.get() and not self.break_active:
             self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
 
+    def schedule_heartbeat(self) -> None:
+        self.cancel_heartbeat()
+        if self.heartbeat_enabled_var.get():
+            interval_ms = max(1, int(60000 / max(1, self.bps)))
+            self.heartbeat_job = self.root.after(interval_ms, self.heartbeat_tick)
+
     def cancel_auto_spin(self) -> None:
         if self.auto_spin_job is not None:
             self.root.after_cancel(self.auto_spin_job)
             self.auto_spin_job = None
+
+    def cancel_heartbeat(self) -> None:
+        if self.heartbeat_job is not None:
+            self.root.after_cancel(self.heartbeat_job)
+            self.heartbeat_job = None
 
     def auto_spin_tick(self) -> None:
         self.auto_spin_job = None
@@ -230,6 +301,11 @@ class WheelOfFortune:
         if not self.spinning:
             self.start_spin()
         self.schedule_auto_spin()
+
+    def heartbeat_tick(self) -> None:
+        self.heartbeat_job = None
+        self.play_heartbeat_sound()
+        self.schedule_heartbeat()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
         if self.break_active:
@@ -289,15 +365,33 @@ class WheelOfFortune:
         lowered_winner = winner.strip().lower()
         is_multiplier = lowered_winner == "2x"
         is_relax = lowered_winner == "relax"
+        is_speed_up = lowered_winner == "speed up"
 
         if is_multiplier:
             self.pending_multiplier *= 2
+            self.consecutive_multiplier_count += 1
             self.status.config(text=f"Result: {winner}. Press space to spin again.")
             return
+
+        consecutive_bonus = self.consecutive_multiplier_count
+        self.consecutive_multiplier_count = 0
 
         if is_relax:
             duration = 5 * self.pending_multiplier
             self.start_relax_timer(duration)
+            return
+
+        if is_speed_up:
+            increment = 5 * (2 ** consecutive_bonus)
+            self.bps += increment
+            self.pending_multiplier = 1
+            self.schedule_heartbeat()
+            self.status.config(
+                text=(
+                    f"Result: Speed Up (+{increment}). BPS is now {self.bps}. "
+                    "Press space to spin again."
+                )
+            )
             return
 
         display_winner = winner
