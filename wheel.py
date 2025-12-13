@@ -89,6 +89,9 @@ class WheelOfFortune:
         self.click_sound = self.load_click_sound()
         self.heartbeat_sound = self.load_heartbeat_sound()
 
+        self.mercy_configs: list[dict[str, int | str]] = []
+        self.mercy_jobs: list[str] = []
+
         self.initial_bps = 60
         self.bps = self.initial_bps
         self.consecutive_multiplier_count = 0
@@ -97,7 +100,9 @@ class WheelOfFortune:
         self.special_counts: dict[int, int] = {}
         self.game_over = False
 
+        self.parse_mercy_items()
         self.parse_special_items()
+        self.schedule_mercy_items()
 
         self.root.bind("<space>", self.start_spin)
         self.draw_wheel()
@@ -140,6 +145,37 @@ class WheelOfFortune:
         for idx in range(count):
             colors.append(palette[idx % len(palette)])
         return colors
+
+    def parse_mercy_items(self) -> None:
+        pattern = re.compile(
+            r"^(?P<name>.+?)\s*\(\s*mercy\s+(?P<x>\d+)\s+(?P<y>\d+)\s*\)\s*$",
+            re.IGNORECASE,
+        )
+        for idx, item in enumerate(self.items):
+            match = pattern.match(item)
+            if not match:
+                continue
+
+            name = match.group("name").strip()
+            initial_delay = int(match.group("x"))
+            repeat_delay = int(match.group("y"))
+
+            base_name = name or item
+            self.items[idx] = base_name
+
+            color = None
+            if idx < len(self.colors):
+                color = self.colors[idx]
+
+            self.mercy_configs.append(
+                {
+                    "index": idx,
+                    "name": base_name,
+                    "initial_delay": initial_delay,
+                    "repeat_delay": repeat_delay,
+                    "color": color,
+                }
+            )
 
     def parse_special_items(self) -> None:
         pattern = re.compile(r"^(?P<name>.+?)\s*\(\s*1\s*/\s*(?P<target>\d+)\s*\)\s*$")
@@ -326,6 +362,37 @@ class WheelOfFortune:
             self.root.after_cancel(self.heartbeat_job)
             self.heartbeat_job = None
 
+    def cancel_mercy_jobs(self) -> None:
+        for job in self.mercy_jobs:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        self.mercy_jobs.clear()
+
+    def schedule_mercy_items(self) -> None:
+        self.cancel_mercy_jobs()
+        for config in self.mercy_configs:
+            delay = config["initial_delay"] if config["initial_delay"] > 0 else config["repeat_delay"]
+            if delay <= 0:
+                continue
+            job = self.root.after(
+                int(delay * 1000),
+                lambda cfg=config: self.apply_mercy_effect(cfg),
+            )
+            self.mercy_jobs.append(job)
+
+    def apply_mercy_effect(self, config: dict[str, int | str]) -> None:
+        repeat_delay = int(config["repeat_delay"])
+        self.duplicate_mercy_item(config)
+
+        if repeat_delay > 0:
+            job = self.root.after(
+                int(repeat_delay * 1000),
+                lambda cfg=config: self.apply_mercy_effect(cfg),
+            )
+            self.mercy_jobs.append(job)
+
     def auto_spin_tick(self) -> None:
         self.auto_spin_job = None
         if not self.auto_spin_var.get():
@@ -496,10 +563,22 @@ class WheelOfFortune:
             self.root.after_cancel(self.break_timer_job)
             self.break_timer_job = None
 
+    def duplicate_mercy_item(self, config: dict[str, int | str]) -> None:
+        name = str(config["name"])
+        color = config.get("color")
+        if color is None:
+            color = self.generate_colors(len(self.items) + 1)[len(self.colors)]
+
+        self.items.append(name)
+        self.colors.append(str(color))
+        self.draw_wheel()
+
     def restart_game(self) -> None:
         self.cancel_auto_spin()
         self.cancel_heartbeat()
         self.cancel_break_timer()
+        self.cancel_mercy_jobs()
+        self.schedule_mercy_items()
         self.game_over = False
         self.spinning = False
         self.pending_multiplier = 1
