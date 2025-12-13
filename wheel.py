@@ -166,13 +166,9 @@ class WheelOfFortune:
 
             self.register_modules(idx, base_name, modules, color)
 
-            label = base_name
-            if "special_target" in modules:
-                label = f"{base_name} (1/{modules['special_target']})"
-
             self.base_names.append(base_name)
             self.item_modules.append(modules)
-            parsed_items.append(label)
+            parsed_items.append(self.format_item_label(idx))
 
         self.items = parsed_items
 
@@ -226,6 +222,15 @@ class WheelOfFortune:
             self.special_names[idx] = base_name
             self.special_counts[idx] = 0
 
+    def format_item_label(self, idx: int) -> str:
+        label = self.base_names[idx]
+        modules = self.item_modules[idx]
+        if "special_target" in modules:
+            target = modules["special_target"]
+            current = self.special_counts.get(idx, 0)
+            label = f"{label} ({current}/{target})"
+        return label
+
     def add_item_with_modules(
         self,
         base_name: str,
@@ -233,24 +238,21 @@ class WheelOfFortune:
         color: str | None = None,
         register_mercy: bool = False,
     ) -> None:
-        label = base_name
-        if "special_target" in modules:
-            label = f"{base_name} (1/{modules['special_target']})"
-
         if color is None:
             palette = self.generate_colors(len(self.items) + 1)
             color = palette[len(self.items)]
 
         self.base_names.append(base_name)
         self.item_modules.append(copy.deepcopy(modules))
-        self.items.append(label)
         self.colors.append(str(color))
 
-        new_index = len(self.items) - 1
+        new_index = len(self.items)
         if "special_target" in modules:
             self.special_targets[new_index] = modules["special_target"]
             self.special_names[new_index] = base_name
             self.special_counts[new_index] = 0
+
+        self.items.append(self.format_item_label(new_index))
 
         if (
             register_mercy
@@ -559,6 +561,7 @@ class WheelOfFortune:
         multiplier_match = re.fullmatch(r"(\d+)x", lowered_winner)
         multiplier_value = int(multiplier_match.group(1)) if multiplier_match else None
         is_relax = lowered_winner == "relax"
+        applied_multiplier = self.pending_multiplier
 
         if multiplier_value is not None:
             self.pending_multiplier *= multiplier_value
@@ -567,23 +570,24 @@ class WheelOfFortune:
             return
 
         if is_relax:
-            duration = 5 * self.pending_multiplier
+            duration = 5 * applied_multiplier
+            self.pending_multiplier = 1
             self.start_relax_timer(duration)
             return
 
         display_winner = winner
-        if self.pending_multiplier > 1:
-            display_winner = f"{self.pending_multiplier}x {winner}"
-            self.pending_multiplier = 1
+        if applied_multiplier > 1:
+            display_winner = f"{applied_multiplier}x {winner}"
 
         module_messages = []
         if "bpm_boost" in modules:
-            boost = modules["bpm_boost"]
+            boost = modules["bpm_boost"] * applied_multiplier
             self.bps += boost
             self.schedule_heartbeat()
             module_messages.append(f"BPM increased by {boost} to {self.bps}.")
 
-        ended, message = self.handle_special_result(index, display_winner)
+        ended, message = self.handle_special_result(index, display_winner, applied_multiplier)
+        self.pending_multiplier = 1
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
 
@@ -591,19 +595,23 @@ class WheelOfFortune:
             self.status.config(text=message)
             self.schedule_auto_spin()
 
-    def handle_special_result(self, index: int, display_winner: str) -> tuple[bool, str]:
+    def handle_special_result(
+        self, index: int, display_winner: str, multiplier: int
+    ) -> tuple[bool, str]:
         if index not in self.special_targets:
             return False, f"Result: {display_winner}. Press space to spin again."
 
-        self.special_counts[index] += 1
+        increment = max(1, multiplier)
+        self.special_counts[index] += increment
         target = self.special_targets[index]
         name = self.special_names.get(index, self.items[index])
-        if self.special_counts[index] >= target:
-            message = f"{name} was chosen {target} times"
+        self.update_special_label(index)
+        current = self.special_counts[index]
+        if current >= target:
+            message = f"{name} was chosen {current}/{target} times"
             self.end_game(message)
             return True, message
 
-        current = self.special_counts[index]
         return (
             False,
             f"Result: {display_winner}. {name} chosen {current}/{target}. Press space to spin again.",
@@ -643,6 +651,10 @@ class WheelOfFortune:
         if self.break_timer_job is not None:
             self.root.after_cancel(self.break_timer_job)
             self.break_timer_job = None
+
+    def update_special_label(self, index: int) -> None:
+        self.items[index] = self.format_item_label(index)
+        self.draw_wheel()
 
     def duplicate_mercy_item(self, config: dict[str, int | str]) -> None:
         base_name = str(config["base_name"])
