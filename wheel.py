@@ -36,6 +36,7 @@ class WheelOfFortune:
 
         self.status = tk.Label(self.root, text="Press space to spin", font=("Arial", 14))
         self.status.pack(pady=10)
+        self.last_result_text = self.status["text"]
 
         self.auto_spin_var = tk.BooleanVar(value=False)
         bottom_bar = tk.Frame(self.root)
@@ -208,28 +209,24 @@ class WheelOfFortune:
     def toggle_auto_spin(self) -> None:
         if self.auto_spin_var.get():
             self.status.config(text="Automatic spinning enabled. Press space to spin manually.")
-            self.schedule_auto_spin()
+            self.start_auto_spin_if_idle()
         else:
             self.status.config(text="Press space to spin")
             self.cancel_auto_spin()
 
-    def schedule_auto_spin(self) -> None:
-        self.cancel_auto_spin()
-        if self.auto_spin_var.get() and not self.break_active:
-            self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
+    def start_auto_spin_if_idle(self) -> None:
+        if self.auto_spin_var.get() and not self.spinning and not self.break_active:
+            self.start_spin()
 
     def cancel_auto_spin(self) -> None:
         if self.auto_spin_job is not None:
             self.root.after_cancel(self.auto_spin_job)
             self.auto_spin_job = None
 
-    def auto_spin_tick(self) -> None:
-        self.auto_spin_job = None
-        if not self.auto_spin_var.get():
-            return
-        if not self.spinning:
-            self.start_spin()
-        self.schedule_auto_spin()
+    def queue_auto_spin(self) -> None:
+        self.cancel_auto_spin()
+        if self.auto_spin_var.get() and not self.break_active:
+            self.auto_spin_job = self.root.after(300, self.start_spin)
 
     def start_spin(self, event: tk.Event | None = None) -> None:
         if self.break_active:
@@ -244,7 +241,6 @@ class WheelOfFortune:
         self.deceleration = self.initial_speed / 3.0
         self.jitter = random.uniform(0.01, 0.05)
         self.last_pointer_index = self.pointer_index()
-        self.status.config(text="Spinning...")
         self.update_spin()
 
     def current_speed(self, elapsed: float) -> float:
@@ -293,6 +289,8 @@ class WheelOfFortune:
         if is_multiplier:
             self.pending_multiplier *= 2
             self.status.config(text=f"Result: {winner}. Press space to spin again.")
+            self.last_result_text = self.status["text"]
+            self.queue_auto_spin()
             return
 
         if is_relax:
@@ -306,6 +304,8 @@ class WheelOfFortune:
             self.pending_multiplier = 1
 
         self.status.config(text=f"Result: {display_winner}. Press space to spin again.")
+        self.last_result_text = self.status["text"]
+        self.queue_auto_spin()
 
     def start_relax_timer(self, duration: float) -> None:
         self.break_active = True
@@ -320,10 +320,11 @@ class WheelOfFortune:
             self.break_timer_job = None
             if self.auto_spin_var.get():
                 self.status.config(text="Relax over. Spinning automatically.")
+                self.last_result_text = self.status["text"]
                 self.start_spin()
-                self.schedule_auto_spin()
             else:
                 self.status.config(text="Relax over. Press space to spin.")
+                self.last_result_text = self.status["text"]
             return
 
         seconds_left = max(1, math.ceil(remaining))
