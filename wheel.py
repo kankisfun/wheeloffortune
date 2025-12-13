@@ -27,6 +27,12 @@ class WheelOfFortune:
         self.radius = 280
         self.center = self.canvas_size // 2
 
+        top_bar = tk.Frame(self.root)
+        top_bar.pack(fill="x", padx=10, pady=(10, 0))
+
+        self.bpm_label = tk.Label(top_bar, font=("Arial", 12, "bold"))
+        self.bpm_label.pack(side="right")
+
         self.canvas = tk.Canvas(
             self.root,
             width=self.canvas_size,
@@ -110,6 +116,8 @@ class WheelOfFortune:
             self.root.destroy()
             return
         self.schedule_mercy_items()
+
+        self.update_bpm_display()
 
         self.root.bind("<space>", self.start_spin)
         self.draw_wheel()
@@ -598,6 +606,7 @@ class WheelOfFortune:
         if "bpm_boost" in modules:
             boost = modules["bpm_boost"]
             self.bps += boost
+            self.update_bpm_display()
             self.schedule_heartbeat()
             module_messages.append(f"BPM increased by {boost} to {self.bps}.")
 
@@ -690,11 +699,18 @@ class WheelOfFortune:
         self.last_pointer_index = self.pointer_index()
         self.draw_wheel()
         self.schedule_heartbeat()
+        self.update_bpm_display()
         self.status.config(text="Press space to spin")
 
     def run(self) -> None:
         if self.items:
             self.root.mainloop()
+
+    def bpm_text(self) -> str:
+        return f"BPM: {self.bps}"
+
+    def update_bpm_display(self) -> None:
+        self.bpm_label.config(text=self.bpm_text())
 
 
 def main() -> None:
