@@ -613,7 +613,9 @@ class WheelOfFortune:
             self.schedule_heartbeat()
             module_messages.append(f"BPM increased by {boost} to {self.bps}.")
 
-        ended, message = self.handle_special_result(index, display_winner, applied_multiplier)
+        ended, message = self.handle_special_result(
+            index, display_winner, applied_multiplier
+        )
         self.pending_multiplier = 1
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
@@ -622,23 +624,26 @@ class WheelOfFortune:
             self.status.config(text=message)
             self.schedule_auto_spin()
 
-    def handle_special_result(self, index: int, display_winner: str) -> tuple[bool, str]:
+    def handle_special_result(
+        self, index: int, display_winner: str, applied_multiplier: int = 1
+    ) -> tuple[bool, str]:
         base_name = self.base_names[index]
         if base_name not in self.special_targets_by_name:
             return False, f"Result: {display_winner}. Press space to spin again."
 
-        self.special_counts_by_name[base_name] += 1
+        self.special_counts_by_name[base_name] += max(1, applied_multiplier)
         target = self.special_targets_by_name[base_name]
         name = base_name
-        if self.special_counts_by_name[base_name] >= target:
+        current = self.special_counts_by_name[base_name]
+        display_current = min(current, target)
+        if current >= target:
             message = f"{name} was chosen {target} times"
             self.end_game(message)
             return True, message
 
-        current = self.special_counts_by_name[base_name]
         return (
             False,
-            f"Result: {display_winner}. {name} chosen {current}/{target}. Press space to spin again.",
+            f"Result: {display_winner}. {name} chosen {display_current}/{target}. Press space to spin again.",
         )
 
     def start_relax_timer(self, duration: float) -> None:
