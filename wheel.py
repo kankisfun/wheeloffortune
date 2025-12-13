@@ -1,0 +1,191 @@
+import math
+import random
+import time
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox
+
+
+class WheelOfFortune:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.root.title("Wheel of Fortune")
+
+        self.canvas_size = 700
+        self.radius = 280
+        self.center = self.canvas_size // 2
+
+        self.canvas = tk.Canvas(
+            self.root,
+            width=self.canvas_size,
+            height=self.canvas_size,
+            bg="white",
+            highlightthickness=0,
+        )
+        self.canvas.pack()
+
+        self.status = tk.Label(self.root, text="Press space to spin", font=("Arial", 14))
+        self.status.pack(pady=10)
+
+        self.items = self.prompt_for_items()
+        if not self.items:
+            self.root.destroy()
+            return
+
+        self.colors = self.generate_colors(len(self.items))
+        self.angle_offset = 0.0
+        self.spinning = False
+        self.jitter = 0.02
+        self.initial_speed = 0.0
+        self.deceleration = 0.0
+        self.spin_start = 0.0
+        self.last_update = 0.0
+
+        self.root.bind("<space>", self.start_spin)
+        self.draw_wheel()
+
+    def prompt_for_items(self) -> list[str]:
+        path = filedialog.askopenfilename(
+            title="Select a text file",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+        )
+        if not path:
+            return []
+
+        try:
+            lines = Path(path).read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            messagebox.showerror("Error", f"Unable to read file: {exc}")
+            return []
+
+        items = [line.strip() for line in lines if line.strip()]
+        if not items:
+            messagebox.showerror("Error", "The selected file is empty.")
+            return []
+        return items
+
+    @staticmethod
+    def generate_colors(count: int) -> list[str]:
+        palette = [
+            "#FF6B6B",
+            "#4ECDC4",
+            "#FFD93D",
+            "#1A535C",
+            "#FF9F1C",
+            "#9B5DE5",
+            "#00BBF9",
+            "#F15BB5",
+        ]
+        colors = []
+        for idx in range(count):
+            colors.append(palette[idx % len(palette)])
+        return colors
+
+    def draw_wheel(self) -> None:
+        self.canvas.delete("all")
+        sector_angle = 360 / len(self.items)
+        bbox = (
+            self.center - self.radius,
+            self.center - self.radius,
+            self.center + self.radius,
+            self.center + self.radius,
+        )
+
+        for index, label in enumerate(self.items):
+            start_angle = -90 + index * sector_angle + self.angle_offset
+            self.canvas.create_arc(
+                bbox,
+                start=start_angle,
+                extent=sector_angle,
+                fill=self.colors[index],
+                outline="white",
+                width=2,
+            )
+            angle_rad = math.radians(start_angle + sector_angle / 2)
+            text_radius = self.radius * 0.65
+            x = self.center + text_radius * math.cos(angle_rad)
+            y = self.center + text_radius * math.sin(angle_rad)
+            self.canvas.create_text(
+                x,
+                y,
+                text=label,
+                font=("Arial", 14, "bold"),
+                fill="white",
+            )
+
+        pointer_size = 18
+        self.canvas.create_polygon(
+            self.center - pointer_size,
+            self.center - self.radius - 10,
+            self.center + pointer_size,
+            self.center - self.radius - 10,
+            self.center,
+            self.center - self.radius - 40,
+            fill="black",
+        )
+
+    def start_spin(self, event: tk.Event | None = None) -> None:
+        if self.spinning:
+            return
+
+        self.spinning = True
+        self.spin_start = time.perf_counter()
+        self.last_update = self.spin_start
+        self.initial_speed = random.uniform(4.7, 5.3) * 360
+        self.deceleration = self.initial_speed / 3.0
+        self.jitter = random.uniform(0.01, 0.05)
+        self.status.config(text="Spinning...")
+        self.update_spin()
+
+    def current_speed(self, elapsed: float) -> float:
+        noise = 1 + random.uniform(-self.jitter, self.jitter)
+        if elapsed < 2:
+            return self.initial_speed * noise
+        if elapsed < 5:
+            slow_time = elapsed - 2
+            speed = max(self.initial_speed - self.deceleration * slow_time, 0)
+            return speed * noise
+        return 0.0
+
+    def update_spin(self) -> None:
+        if not self.spinning:
+            return
+
+        now = time.perf_counter()
+        elapsed = now - self.spin_start
+        dt = now - self.last_update
+        self.last_update = now
+
+        speed = self.current_speed(elapsed)
+        self.angle_offset = (self.angle_offset + speed * dt) % 360
+        self.draw_wheel()
+
+        if elapsed >= 5:
+            self.finish_spin()
+            return
+
+        self.root.after(16, self.update_spin)
+
+    def finish_spin(self) -> None:
+        self.spinning = False
+        sector_angle = 360 / len(self.items)
+        pointer_angle = -90
+        relative_pointer = (pointer_angle - self.angle_offset) % 360
+        normalized = (relative_pointer + 90) % 360
+        index = int(normalized // sector_angle)
+        winner = self.items[index]
+        self.status.config(text=f"Result: {winner}. Press space to spin again.")
+
+    def run(self) -> None:
+        if self.items:
+            self.root.mainloop()
+
+
+def main() -> None:
+    root = tk.Tk()
+    app = WheelOfFortune(root)
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
