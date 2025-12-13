@@ -252,7 +252,8 @@ class WheelOfFortune:
         modules = self.item_modules[idx]
         if "special_target" in modules:
             target = modules["special_target"]
-            current = self.special_counts.get(idx, 0)
+            base_name = self.base_names[idx]
+            current = self.special_counts_by_name.get(base_name, 0)
             label = f"{label} ({current}/{target})"
         return label
 
