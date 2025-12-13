@@ -5,6 +5,16 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
+try:
+    import simpleaudio  # type: ignore
+except Exception:  # pragma: no cover - fallback for environments without simpleaudio
+    simpleaudio = None  # type: ignore
+
+try:
+    import winsound  # type: ignore
+except Exception:  # pragma: no cover - fallback for non-Windows platforms
+    winsound = None  # type: ignore
+
 
 class WheelOfFortune:
     def __init__(self, root: tk.Tk) -> None:
@@ -40,9 +50,12 @@ class WheelOfFortune:
         self.deceleration = 0.0
         self.spin_start = 0.0
         self.last_update = 0.0
+        self.last_pointer_index = 0
+        self.click_sound = self.load_click_sound()
 
         self.root.bind("<space>", self.start_spin)
         self.draw_wheel()
+        self.last_pointer_index = self.pointer_index()
 
     def prompt_for_items(self) -> list[str]:
         path = filedialog.askopenfilename(
@@ -80,6 +93,42 @@ class WheelOfFortune:
         for idx in range(count):
             colors.append(palette[idx % len(palette)])
         return colors
+
+    def load_click_sound(self):  # type: ignore[override]
+        path = Path(__file__).with_name("click.wav")
+        if not path.exists():
+            return None
+
+        if simpleaudio is not None:
+            try:
+                return simpleaudio.WaveObject.from_wave_file(str(path))
+            except Exception:
+                return None
+
+        if winsound is not None:
+            return path
+
+        return None
+
+    def play_click_sound(self) -> None:
+        if self.click_sound is None:
+            return
+
+        if simpleaudio is not None and hasattr(self.click_sound, "play"):
+            try:
+                self.click_sound.play()
+            except Exception:
+                pass
+            return
+
+        if winsound is not None:
+            try:
+                winsound.PlaySound(
+                    str(self.click_sound),
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
+                )
+            except Exception:
+                pass
 
     def draw_wheel(self) -> None:
         self.canvas.delete("all")
@@ -134,6 +183,11 @@ class WheelOfFortune:
             fill="black",
         )
 
+    def pointer_index(self) -> int:
+        sector_angle = 360 / len(self.items)
+        relative = (sector_angle / 2 - self.angle_offset) % 360
+        return int(relative // sector_angle)
+
     def start_spin(self, event: tk.Event | None = None) -> None:
         if self.spinning:
             return
@@ -144,6 +198,7 @@ class WheelOfFortune:
         self.initial_speed = random.uniform(4.7, 5.3) * 360
         self.deceleration = self.initial_speed / 3.0
         self.jitter = random.uniform(0.01, 0.05)
+        self.last_pointer_index = self.pointer_index()
         self.status.config(text="Spinning...")
         self.update_spin()
 
@@ -170,6 +225,11 @@ class WheelOfFortune:
         self.angle_offset = (self.angle_offset + speed * dt) % 360
         self.draw_wheel()
 
+        pointer_index = self.pointer_index()
+        if pointer_index != self.last_pointer_index:
+            self.play_click_sound()
+            self.last_pointer_index = pointer_index
+
         if elapsed >= 5:
             self.finish_spin()
             return
@@ -178,10 +238,8 @@ class WheelOfFortune:
 
     def finish_spin(self) -> None:
         self.spinning = False
-        sector_angle = 360 / len(self.items)
-        pointer_angle = 90
-        relative = (sector_angle / 2 - self.angle_offset) % 360
-        index = int(relative // sector_angle)
+        index = self.pointer_index()
+        self.last_pointer_index = index
         winner = self.items[index]
         self.status.config(text=f"Result: {winner}. Press space to spin again.")
 
