@@ -99,12 +99,15 @@ class WheelOfFortune:
 
         self.initial_bps = 60
         self.bps = self.initial_bps
-        self.special_targets: dict[int, int] = {}
-        self.special_names: dict[int, str] = {}
-        self.special_counts: dict[int, int] = {}
+        self.special_targets_by_name: dict[str, int] = {}
+        self.special_counts_by_name: dict[str, int] = {}
         self.game_over = False
+        self.has_invalid_config = False
 
         self.parse_items_and_modules()
+        if self.has_invalid_config:
+            self.root.destroy()
+            return
         self.schedule_mercy_items()
 
         self.root.bind("<space>", self.start_spin)
@@ -153,15 +156,27 @@ class WheelOfFortune:
         self.base_names.clear()
         self.item_modules.clear()
         self.mercy_configs.clear()
-        self.special_targets.clear()
-        self.special_names.clear()
-        self.special_counts.clear()
+        self.special_targets_by_name.clear()
+        self.special_counts_by_name.clear()
+        seen_modules: dict[str, dict[str, int]] = {}
 
         parsed_items: list[str] = []
 
         for idx, raw_item in enumerate(self.items):
             base_name, module_texts = self.extract_base_and_modules(raw_item)
             modules = self.interpret_modules(module_texts)
+            if base_name in seen_modules and seen_modules[base_name] != modules:
+                messagebox.showerror(
+                    "Error",
+                    (
+                        "Conflicting modules found for choice "
+                        f"'{base_name}'. All occurrences must use the same modules."
+                    ),
+                )
+                self.has_invalid_config = True
+                return
+
+            seen_modules[base_name] = copy.deepcopy(modules)
             color = self.colors[idx] if idx < len(self.colors) else None
 
             self.register_modules(idx, base_name, modules, color)
@@ -222,9 +237,10 @@ class WheelOfFortune:
             )
 
         if "special_target" in modules:
-            self.special_targets[idx] = modules["special_target"]
-            self.special_names[idx] = base_name
-            self.special_counts[idx] = 0
+            target = modules["special_target"]
+            if base_name not in self.special_targets_by_name:
+                self.special_targets_by_name[base_name] = target
+                self.special_counts_by_name[base_name] = 0
 
     def add_item_with_modules(
         self,
@@ -248,9 +264,10 @@ class WheelOfFortune:
 
         new_index = len(self.items) - 1
         if "special_target" in modules:
-            self.special_targets[new_index] = modules["special_target"]
-            self.special_names[new_index] = base_name
-            self.special_counts[new_index] = 0
+            target = modules["special_target"]
+            if base_name not in self.special_targets_by_name:
+                self.special_targets_by_name[base_name] = target
+                self.special_counts_by_name[base_name] = 0
 
         if (
             register_mercy
@@ -584,18 +601,19 @@ class WheelOfFortune:
             self.schedule_auto_spin()
 
     def handle_special_result(self, index: int, display_winner: str) -> tuple[bool, str]:
-        if index not in self.special_targets:
+        base_name = self.base_names[index]
+        if base_name not in self.special_targets_by_name:
             return False, f"Result: {display_winner}. Press space to spin again."
 
-        self.special_counts[index] += 1
-        target = self.special_targets[index]
-        name = self.special_names.get(index, self.items[index])
-        if self.special_counts[index] >= target:
+        self.special_counts_by_name[base_name] += 1
+        target = self.special_targets_by_name[base_name]
+        name = base_name
+        if self.special_counts_by_name[base_name] >= target:
             message = f"{name} was chosen {target} times"
             self.end_game(message)
             return True, message
 
-        current = self.special_counts[index]
+        current = self.special_counts_by_name[base_name]
         return (
             False,
             f"Result: {display_winner}. {name} chosen {current}/{target}. Press space to spin again.",
