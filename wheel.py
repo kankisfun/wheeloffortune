@@ -1,3 +1,4 @@
+import copy
 import math
 import random
 import re
@@ -74,6 +75,7 @@ class WheelOfFortune:
             return
 
         self.colors = self.generate_colors(len(self.items))
+        self.original_items = list(self.items)
         self.angle_offset = 0.0
         self.spinning = False
         self.pending_multiplier = 1
@@ -92,16 +94,17 @@ class WheelOfFortune:
         self.mercy_configs: list[dict[str, int | str]] = []
         self.mercy_jobs: list[str] = []
 
+        self.base_names: list[str] = []
+        self.item_modules: list[dict[str, int]] = []
+
         self.initial_bps = 60
         self.bps = self.initial_bps
-        self.consecutive_multiplier_count = 0
         self.special_targets: dict[int, int] = {}
         self.special_names: dict[int, str] = {}
         self.special_counts: dict[int, int] = {}
         self.game_over = False
 
-        self.parse_mercy_items()
-        self.parse_special_items()
+        self.parse_items_and_modules()
         self.schedule_mercy_items()
 
         self.root.bind("<space>", self.start_spin)
@@ -146,48 +149,124 @@ class WheelOfFortune:
             colors.append(palette[idx % len(palette)])
         return colors
 
-    def parse_mercy_items(self) -> None:
-        pattern = re.compile(
-            r"^(?P<name>.+?)\s*\(\s*mercy\s+(?P<x>\d+)\s+(?P<y>\d+)\s*\)\s*$",
-            re.IGNORECASE,
-        )
-        for idx, item in enumerate(self.items):
-            match = pattern.match(item)
-            if not match:
+    def parse_items_and_modules(self) -> None:
+        self.base_names.clear()
+        self.item_modules.clear()
+        self.mercy_configs.clear()
+        self.special_targets.clear()
+        self.special_names.clear()
+        self.special_counts.clear()
+
+        parsed_items: list[str] = []
+
+        for idx, raw_item in enumerate(self.items):
+            base_name, module_texts = self.extract_base_and_modules(raw_item)
+            modules = self.interpret_modules(module_texts)
+            color = self.colors[idx] if idx < len(self.colors) else None
+
+            self.register_modules(idx, base_name, modules, color)
+
+            label = base_name
+            if "special_target" in modules:
+                label = f"{base_name} (1/{modules['special_target']})"
+
+            self.base_names.append(base_name)
+            self.item_modules.append(modules)
+            parsed_items.append(label)
+
+        self.items = parsed_items
+
+    @staticmethod
+    def extract_base_and_modules(item: str) -> tuple[str, list[str]]:
+        module_matches = re.findall(r"\([^)]*\)", item)
+        base_name = re.sub(r"\([^)]*\)", "", item).strip()
+        module_texts = [match.strip("() ") for match in module_matches]
+        return base_name or item.strip(), module_texts
+
+    def interpret_modules(self, module_texts: list[str]) -> dict[str, int]:
+        modules: dict[str, int] = {}
+        for module_text in module_texts:
+            lower = module_text.lower()
+
+            mercy_match = re.fullmatch(r"mercy\s+(\d+)\s+(\d+)", lower)
+            if mercy_match:
+                modules["mercy_initial"] = int(mercy_match.group(1))
+                modules["mercy_repeat"] = int(mercy_match.group(2))
                 continue
 
-            name = match.group("name").strip()
-            initial_delay = int(match.group("x"))
-            repeat_delay = int(match.group("y"))
+            target_match = re.fullmatch(r"1\s*/\s*(\d+)", lower)
+            if target_match:
+                modules["special_target"] = int(target_match.group(1))
+                continue
 
-            base_name = name or item
-            self.items[idx] = base_name
+            bpm_match = re.fullmatch(r"\+\s*(\d+)", lower)
+            if bpm_match:
+                modules["bpm_boost"] = int(bpm_match.group(1))
+                continue
 
-            color = None
-            if idx < len(self.colors):
-                color = self.colors[idx]
+        return modules
 
+    def register_modules(
+        self, idx: int, base_name: str, modules: dict[str, int], color: str | None
+    ) -> None:
+        if "mercy_initial" in modules and "mercy_repeat" in modules:
             self.mercy_configs.append(
                 {
                     "index": idx,
-                    "name": base_name,
-                    "initial_delay": initial_delay,
-                    "repeat_delay": repeat_delay,
+                    "base_name": base_name,
+                    "initial_delay": modules["mercy_initial"],
+                    "repeat_delay": modules["mercy_repeat"],
                     "color": color,
+                    "modules": copy.deepcopy(modules),
                 }
             )
 
-    def parse_special_items(self) -> None:
-        pattern = re.compile(r"^(?P<name>.+?)\s*\(\s*1\s*/\s*(?P<target>\d+)\s*\)\s*$")
-        for idx, item in enumerate(self.items):
-            match = pattern.match(item)
-            if not match:
-                continue
-            target = int(match.group("target"))
-            name = match.group("name").strip()
-            self.special_targets[idx] = target
-            self.special_names[idx] = name or item
+        if "special_target" in modules:
+            self.special_targets[idx] = modules["special_target"]
+            self.special_names[idx] = base_name
             self.special_counts[idx] = 0
+
+    def add_item_with_modules(
+        self,
+        base_name: str,
+        modules: dict[str, int],
+        color: str | None = None,
+        register_mercy: bool = False,
+    ) -> None:
+        label = base_name
+        if "special_target" in modules:
+            label = f"{base_name} (1/{modules['special_target']})"
+
+        if color is None:
+            palette = self.generate_colors(len(self.items) + 1)
+            color = palette[len(self.items)]
+
+        self.base_names.append(base_name)
+        self.item_modules.append(copy.deepcopy(modules))
+        self.items.append(label)
+        self.colors.append(str(color))
+
+        new_index = len(self.items) - 1
+        if "special_target" in modules:
+            self.special_targets[new_index] = modules["special_target"]
+            self.special_names[new_index] = base_name
+            self.special_counts[new_index] = 0
+
+        if (
+            register_mercy
+            and "mercy_initial" in modules
+            and "mercy_repeat" in modules
+        ):
+            self.mercy_configs.append(
+                {
+                    "index": new_index,
+                    "base_name": base_name,
+                    "initial_delay": modules["mercy_initial"],
+                    "repeat_delay": modules["mercy_repeat"],
+                    "color": color,
+                    "modules": copy.deepcopy(modules),
+                }
+            )
 
     def load_click_sound(self):  # type: ignore[override]
         path = Path(__file__).with_name("click.wav")
@@ -466,39 +545,22 @@ class WheelOfFortune:
         index = self.pointer_index()
         self.last_pointer_index = index
         winner = self.items[index]
-        lowered_winner = winner.strip().lower()
+        base_name = self.base_names[index]
+        modules = self.item_modules[index]
+        lowered_winner = base_name.strip().lower()
         multiplier_match = re.fullmatch(r"(\d+)x", lowered_winner)
         multiplier_value = int(multiplier_match.group(1)) if multiplier_match else None
         is_relax = lowered_winner == "relax"
-        is_speed_up = lowered_winner == "speed up"
 
         if multiplier_value is not None:
             self.pending_multiplier *= multiplier_value
-            self.consecutive_multiplier_count += 1
             self.status.config(text=f"Result: {winner}. Press space to spin again.")
             self.schedule_auto_spin()
             return
 
-        consecutive_bonus = self.consecutive_multiplier_count
-        self.consecutive_multiplier_count = 0
-
         if is_relax:
             duration = 5 * self.pending_multiplier
             self.start_relax_timer(duration)
-            return
-
-        if is_speed_up:
-            increment = 5 * (2 ** consecutive_bonus)
-            self.bps += increment
-            self.pending_multiplier = 1
-            self.schedule_heartbeat()
-            self.status.config(
-                text=(
-                    f"Result: Speed Up (+{increment}). BPS is now {self.bps}. "
-                    "Press space to spin again."
-                )
-            )
-            self.schedule_auto_spin()
             return
 
         display_winner = winner
@@ -506,7 +568,17 @@ class WheelOfFortune:
             display_winner = f"{self.pending_multiplier}x {winner}"
             self.pending_multiplier = 1
 
+        module_messages = []
+        if "bpm_boost" in modules:
+            boost = modules["bpm_boost"]
+            self.bps += boost
+            self.schedule_heartbeat()
+            module_messages.append(f"BPM increased by {boost} to {self.bps}.")
+
         ended, message = self.handle_special_result(index, display_winner)
+        if module_messages:
+            message = f"{message} {' '.join(module_messages)}".strip()
+
         if not ended:
             self.status.config(text=message)
             self.schedule_auto_spin()
@@ -565,13 +637,10 @@ class WheelOfFortune:
             self.break_timer_job = None
 
     def duplicate_mercy_item(self, config: dict[str, int | str]) -> None:
-        name = str(config["name"])
+        base_name = str(config["base_name"])
+        modules = config.get("modules", {})
         color = config.get("color")
-        if color is None:
-            color = self.generate_colors(len(self.items) + 1)[len(self.colors)]
-
-        self.items.append(name)
-        self.colors.append(str(color))
+        self.add_item_with_modules(base_name, dict(modules), str(color) if color else None)
         self.draw_wheel()
 
     def restart_game(self) -> None:
@@ -579,12 +648,13 @@ class WheelOfFortune:
         self.cancel_heartbeat()
         self.cancel_break_timer()
         self.cancel_mercy_jobs()
+        self.items = list(self.original_items)
+        self.colors = self.generate_colors(len(self.items))
+        self.parse_items_and_modules()
         self.schedule_mercy_items()
         self.game_over = False
         self.spinning = False
         self.pending_multiplier = 1
-        self.consecutive_multiplier_count = 0
-        self.special_counts = {idx: 0 for idx in self.special_targets}
         self.bps = self.initial_bps
         self.angle_offset = 0.0
         self.break_active = False
