@@ -35,7 +35,10 @@ class WheelOfFortune:
         self.canvas.pack()
 
         self.status = tk.Label(self.root, text="Press space to spin", font=("Arial", 14))
-        self.status.pack(pady=10)
+        self.status.pack(pady=(10, 0))
+
+        self.result_label = tk.Label(self.root, text="", font=("Arial", 12))
+        self.result_label.pack(pady=(2, 10))
 
         self.auto_spin_var = tk.BooleanVar(value=False)
         bottom_bar = tk.Frame(self.root)
@@ -210,23 +213,21 @@ class WheelOfFortune:
             self.status.config(text="Press space to spin")
             self.cancel_auto_spin()
 
-    def schedule_auto_spin(self) -> None:
+    def schedule_auto_spin(self, delay: int = 5000) -> None:
         self.cancel_auto_spin()
         if self.auto_spin_var.get():
-            self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
+            self.auto_spin_job = self.root.after(delay, self.start_auto_spin)
 
     def cancel_auto_spin(self) -> None:
         if self.auto_spin_job is not None:
             self.root.after_cancel(self.auto_spin_job)
             self.auto_spin_job = None
 
-    def auto_spin_tick(self) -> None:
+    def start_auto_spin(self) -> None:
         self.auto_spin_job = None
-        if not self.auto_spin_var.get():
+        if not self.auto_spin_var.get() or self.spinning:
             return
-        if not self.spinning:
-            self.start_spin()
-        self.schedule_auto_spin()
+        self.start_spin()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
         if self.spinning:
@@ -285,7 +286,9 @@ class WheelOfFortune:
 
         if is_multiplier:
             self.pending_multiplier *= 2
-            self.status.config(text=f"Result: {winner}. Press space to spin again.")
+            self.result_label.config(text=f"Result: {winner}")
+            self.status.config(text="Press space to spin")
+            self.schedule_auto_spin(0)
             return
 
         display_winner = winner
@@ -293,7 +296,9 @@ class WheelOfFortune:
             display_winner = f"{self.pending_multiplier}x {winner}"
             self.pending_multiplier = 1
 
-        self.status.config(text=f"Result: {display_winner}. Press space to spin again.")
+        self.result_label.config(text=f"Result: {display_winner}")
+        self.status.config(text="Press space to spin")
+        self.schedule_auto_spin(0)
 
     def run(self) -> None:
         if self.items:
