@@ -302,8 +302,13 @@ class WheelOfFortune:
 
     def schedule_auto_spin(self) -> None:
         self.cancel_auto_spin()
-        if self.auto_spin_var.get() and not self.break_active and not self.game_over:
-            self.auto_spin_job = self.root.after(5000, self.auto_spin_tick)
+        if (
+            self.auto_spin_var.get()
+            and not self.break_active
+            and not self.game_over
+            and not self.spinning
+        ):
+            self.auto_spin_job = self.root.after(300, self.auto_spin_tick)
 
     def schedule_heartbeat(self) -> None:
         self.cancel_heartbeat()
@@ -327,9 +332,10 @@ class WheelOfFortune:
             return
         if self.game_over:
             return
+        if self.break_active:
+            return
         if not self.spinning:
             self.start_spin()
-        self.schedule_auto_spin()
 
     def heartbeat_tick(self) -> None:
         self.heartbeat_job = None
@@ -352,7 +358,6 @@ class WheelOfFortune:
         self.deceleration = self.initial_speed / 3.0
         self.jitter = random.uniform(0.01, 0.05)
         self.last_pointer_index = self.pointer_index()
-        self.status.config(text="Spinning...")
         self.update_spin()
 
     def current_speed(self, elapsed: float) -> float:
@@ -403,6 +408,7 @@ class WheelOfFortune:
             self.pending_multiplier *= 2
             self.consecutive_multiplier_count += 1
             self.status.config(text=f"Result: {winner}. Press space to spin again.")
+            self.schedule_auto_spin()
             return
 
         consecutive_bonus = self.consecutive_multiplier_count
@@ -424,6 +430,7 @@ class WheelOfFortune:
                     "Press space to spin again."
                 )
             )
+            self.schedule_auto_spin()
             return
 
         display_winner = winner
@@ -434,6 +441,7 @@ class WheelOfFortune:
         ended, message = self.handle_special_result(index, display_winner)
         if not ended:
             self.status.config(text=message)
+            self.schedule_auto_spin()
 
     def handle_special_result(self, index: int, display_winner: str) -> tuple[bool, str]:
         if index not in self.special_targets:
@@ -467,7 +475,6 @@ class WheelOfFortune:
             if self.auto_spin_var.get():
                 self.status.config(text="Relax over. Spinning automatically.")
                 self.start_spin()
-                self.schedule_auto_spin()
             else:
                 self.status.config(text="Relax over. Press space to spin.")
             return
