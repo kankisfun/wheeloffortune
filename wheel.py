@@ -115,7 +115,6 @@ class WheelOfFortune:
         if self.has_invalid_config:
             self.root.destroy()
             return
-        self.schedule_mercy_items()
 
         self.update_bpm_display()
 
