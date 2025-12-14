@@ -1,7 +1,7 @@
-Relax
-Breath (Mercy 60 5) (1/3)
-Speed Up (+5)
-3x
-Slap
-Short Breath
+Nothing :)
 2x
+Relax (+3) (Cooldown 30)
+Short Breath  (1/10) (Cooldown 30) (breath.wav)
+Slow Down (*0.75) (Missing) (Mercy 0 50) (Max 3)
+Speed Up (+6)
+3x (Missing) (Mercy 120 0)
