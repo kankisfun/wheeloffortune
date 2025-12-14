@@ -286,6 +286,16 @@ class WheelOfFortune:
                 modules["bps_max"] = int(less_than_match.group(1))
                 continue
 
+            timer_greater_match = re.fullmatch(r">\s*(\d+)s", lower)
+            if timer_greater_match:
+                modules["timer_min_seconds"] = int(timer_greater_match.group(1))
+                continue
+
+            timer_less_match = re.fullmatch(r"<\s*(\d+)s", lower)
+            if timer_less_match:
+                modules["timer_max_seconds"] = int(timer_less_match.group(1))
+                continue
+
             if lower.endswith(".wav"):
                 modules["sound_effect"] = module_text.strip()
                 continue
@@ -313,6 +323,27 @@ class WheelOfFortune:
         if isinstance(max_bps, int) and self.bps >= max_bps:
             return False
         return True
+
+    def current_timer_seconds(self) -> float:
+        if self.first_spin_time is None:
+            return 0.0
+        return time.perf_counter() - self.first_spin_time
+
+    def is_item_allowed_by_timer(
+        self, modules: dict[str, int | bool | float | str]
+    ) -> bool:
+        min_seconds = modules.get("timer_min_seconds")
+        max_seconds = modules.get("timer_max_seconds")
+        elapsed = self.current_timer_seconds()
+
+        if isinstance(min_seconds, int) and elapsed <= min_seconds:
+            return False
+        if isinstance(max_seconds, int) and elapsed >= max_seconds:
+            return False
+        return True
+
+    def is_item_allowed(self, modules: dict[str, int | bool | float | str]) -> bool:
+        return self.is_item_allowed_by_bps(modules) and self.is_item_allowed_by_timer(modules)
 
     def register_modules(
         self,
@@ -366,7 +397,7 @@ class WheelOfFortune:
         if base_name in self.max_blocked_names:
             return
 
-        if not self.is_item_allowed_by_bps(modules):
+        if not self.is_item_allowed(modules):
             self.hidden_items.append(
                 {"base_name": base_name, "modules": modules, "color": color}
             )
@@ -413,7 +444,7 @@ class WheelOfFortune:
         removed_any = False
         for idx in range(len(self.item_modules) - 1, -1, -1):
             modules = self.item_modules[idx]
-            if self.is_item_allowed_by_bps(modules):
+            if self.is_item_allowed(modules):
                 continue
 
             record: dict[str, str | dict[str, int | bool | float | str] | None] = {
@@ -433,7 +464,7 @@ class WheelOfFortune:
             if not isinstance(modules, dict) or not isinstance(base_name, str):
                 continue
 
-            if not self.is_item_allowed_by_bps(modules):
+            if not self.is_item_allowed(modules):
                 continue
 
             self.add_item_with_modules(
@@ -624,6 +655,7 @@ class WheelOfFortune:
             elapsed = time.perf_counter() - self.first_spin_time
             minutes, seconds = divmod(int(elapsed), 60)
             self.timer_label.config(text=f"Timer: {minutes:02d}:{seconds:02d}")
+        self.apply_bps_conditions()
         self.timer_job = self.root.after(500, self.update_timer_label)
 
     def cancel_timer(self) -> None:
@@ -635,6 +667,7 @@ class WheelOfFortune:
         self.first_spin_time = time.perf_counter()
         self.cancel_timer()
         self.update_timer_label()
+        self.apply_bps_conditions()
 
     def cancel_mercy_jobs(self) -> None:
         for job in self.mercy_jobs:
