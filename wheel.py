@@ -94,6 +94,7 @@ class WheelOfFortune:
         self.spin_start = 0.0
         self.last_update = 0.0
         self.last_pointer_index = 0
+        self.sound_cache: dict[str, object | None] = {}
         self.click_sound = self.load_click_sound()
         self.heartbeat_sound = self.load_heartbeat_sound()
 
@@ -104,7 +105,7 @@ class WheelOfFortune:
         self.cooldown_jobs: list[str] = []
 
         self.base_names: list[str] = []
-        self.item_modules: list[dict[str, int]] = []
+        self.item_modules: list[dict[str, int | bool | float | str]] = []
 
         self.initial_bps = 60
         self.bps = self.initial_bps
@@ -174,11 +175,11 @@ class WheelOfFortune:
         self.max_targets_by_name.clear()
         self.max_counts_by_name.clear()
         self.max_blocked_names.clear()
-        seen_modules: dict[str, dict[str, int | bool]] = {}
+        seen_modules: dict[str, dict[str, int | bool | float | str]] = {}
 
         parsed_items: list[str] = []
 
-        parsed_entries: list[tuple[str, dict[str, int | bool], bool]] = []
+        parsed_entries: list[tuple[str, dict[str, int | bool | float | str], bool]] = []
         non_missing_count = 0
         for raw_item in self.items:
             base_name, module_texts = self.extract_base_and_modules(raw_item)
@@ -225,8 +226,8 @@ class WheelOfFortune:
         module_texts = [match.strip("() ") for match in module_matches]
         return base_name or item.strip(), module_texts
 
-    def interpret_modules(self, module_texts: list[str]) -> dict[str, int | bool]:
-        modules: dict[str, int | bool] = {}
+    def interpret_modules(self, module_texts: list[str]) -> dict[str, int | bool | float | str]:
+        modules: dict[str, int | bool | float | str] = {}
         for module_text in module_texts:
             lower = module_text.lower()
 
@@ -251,9 +252,18 @@ class WheelOfFortune:
                 modules["max"] = int(max_match.group(1))
                 continue
 
-            bpm_match = re.fullmatch(r"\+\s*(\d+)", lower)
+            bpm_match = re.fullmatch(r"\+\s*(-?\d+)", lower)
             if bpm_match:
                 modules["bpm_boost"] = int(bpm_match.group(1))
+                continue
+
+            multiplier_match = re.fullmatch(r"\*\s*([-+]?\d+(?:\.\d+)?)", lower)
+            if multiplier_match:
+                modules["bpm_multiplier"] = float(multiplier_match.group(1))
+                continue
+
+            if lower.endswith(".wav"):
+                modules["sound_effect"] = module_text.strip()
                 continue
 
             if lower == "fragile":
@@ -270,7 +280,7 @@ class WheelOfFortune:
         self,
         idx: int | None,
         base_name: str,
-        modules: dict[str, int | bool],
+        modules: dict[str, int | bool | float | str],
         color: str | None,
     ) -> None:
         if "mercy_initial" in modules and "mercy_repeat" in modules:
@@ -310,7 +320,7 @@ class WheelOfFortune:
     def add_item_with_modules(
         self,
         base_name: str,
-        modules: dict[str, int],
+        modules: dict[str, int | bool | float | str],
         color: str | None = None,
         register_mercy: bool = False,
     ) -> None:
@@ -354,8 +364,8 @@ class WheelOfFortune:
                 }
             )
 
-    def load_click_sound(self):  # type: ignore[override]
-        path = Path(__file__).with_name("click.wav")
+    def load_sound_file(self, filename: str):  # type: ignore[override]
+        path = Path(__file__).with_name(filename)
         if not path.exists():
             return None
 
@@ -369,30 +379,20 @@ class WheelOfFortune:
             return path
 
         return None
+
+    def load_click_sound(self):  # type: ignore[override]
+        return self.load_sound_file("click.wav")
 
     def load_heartbeat_sound(self):  # type: ignore[override]
-        path = Path(__file__).with_name("Heartbeat.wav")
-        if not path.exists():
-            return None
+        return self.load_sound_file("Heartbeat.wav")
 
-        if simpleaudio is not None:
-            try:
-                return simpleaudio.WaveObject.from_wave_file(str(path))
-            except Exception:
-                return None
-
-        if winsound is not None:
-            return path
-
-        return None
-
-    def play_click_sound(self) -> None:
-        if self.click_sound is None:
+    def play_sound(self, sound: object | None) -> None:
+        if sound is None:
             return
 
-        if simpleaudio is not None and hasattr(self.click_sound, "play"):
+        if simpleaudio is not None and hasattr(sound, "play"):
             try:
-                self.click_sound.play()
+                sound.play()
             except Exception:
                 pass
             return
@@ -400,11 +400,14 @@ class WheelOfFortune:
         if winsound is not None:
             try:
                 winsound.PlaySound(
-                    str(self.click_sound),
+                    str(sound),
                     winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
                 )
             except Exception:
                 pass
+
+    def play_click_sound(self) -> None:
+        self.play_sound(self.click_sound)
 
     def play_heartbeat_sound(self) -> None:
         if not self.heartbeat_enabled_var.get():
@@ -413,24 +416,7 @@ class WheelOfFortune:
         if self.break_active:
             return
 
-        if self.heartbeat_sound is None:
-            return
-
-        if simpleaudio is not None and hasattr(self.heartbeat_sound, "play"):
-            try:
-                self.heartbeat_sound.play()
-            except Exception:
-                pass
-            return
-
-        if winsound is not None:
-            try:
-                winsound.PlaySound(
-                    str(self.heartbeat_sound),
-                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
-                )
-            except Exception:
-                pass
+        self.play_sound(self.heartbeat_sound)
 
     def draw_wheel(self) -> None:
         self.canvas.delete("all")
@@ -671,12 +657,31 @@ class WheelOfFortune:
             display_winner = f"{applied_multiplier}x {winner}"
 
         module_messages = []
+        bpm_changed = False
+        if "bpm_multiplier" in modules:
+            multiplier = float(modules["bpm_multiplier"])
+            total_multiplier = math.pow(multiplier, applied_multiplier)
+            self.bps *= total_multiplier
+            bpm_changed = True
+            module_messages.append(
+                f"BPM multiplied by {total_multiplier} to {self.bps}."
+            )
+
         if "bpm_boost" in modules:
             boost = modules["bpm_boost"] * applied_multiplier
             self.bps += boost
+            bpm_changed = True
+            module_messages.append(f"BPM increased by {boost} to {self.bps}.")
+
+        if bpm_changed:
             self.update_bpm_display()
             self.schedule_heartbeat()
-            module_messages.append(f"BPM increased by {boost} to {self.bps}.")
+
+        if "sound_effect" in modules:
+            filename = str(modules["sound_effect"])
+            if filename not in self.sound_cache:
+                self.sound_cache[filename] = self.load_sound_file(filename)
+            self.play_sound(self.sound_cache.get(filename))
 
         ended, message = self.handle_special_result(
             index, display_winner, applied_multiplier
@@ -815,7 +820,7 @@ class WheelOfFortune:
         )
 
     def restore_cooldown_item(
-        self, base_name: str, modules: dict[str, int], color: str | None
+        self, base_name: str, modules: dict[str, int | bool | float | str], color: str | None
     ) -> None:
         self.add_item_with_modules(base_name, modules, color)
         self.draw_wheel()
