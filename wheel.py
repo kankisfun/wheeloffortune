@@ -896,7 +896,7 @@ class WheelOfFortune:
             module_messages.append("Timer reset.")
 
         ended, message = self.handle_special_result(
-            index, display_winner, applied_multiplier
+            base_name, display_winner, applied_multiplier
         )
         self.pending_multiplier = 1
 
@@ -950,9 +950,8 @@ class WheelOfFortune:
         print(f"Selected: {selection}")
 
     def handle_special_result(
-        self, index: int, display_winner: str, applied_multiplier: int = 1
+        self, base_name: str, display_winner: str, applied_multiplier: int = 1
     ) -> tuple[bool, str]:
-        base_name = self.base_names[index]
         if base_name not in self.special_targets_by_name:
             return False, f"Result: {display_winner}. Spinning again shortly."
 
