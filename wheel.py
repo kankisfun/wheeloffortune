@@ -608,7 +608,8 @@ class WheelOfFortune:
             return 0
         sector_angle = 360 / len(self.items)
         relative = (sector_angle / 2 - self.angle_offset) % 360
-        return int(relative // sector_angle)
+        index = int(relative // sector_angle)
+        return min(index, len(self.items) - 1)
 
     def toggle_heartbeat(self) -> None:
         if self.heartbeat_enabled_var.get():
