@@ -622,12 +622,6 @@ class WheelOfFortune:
             self.schedule_auto_spin()
             return
 
-        if is_relax:
-            duration = 5 * applied_multiplier
-            self.pending_multiplier = 1
-            self.start_relax_timer(duration)
-            return
-
         display_winner = winner
         if applied_multiplier > 1:
             display_winner = f"{applied_multiplier}x {winner}"
@@ -652,9 +646,16 @@ class WheelOfFortune:
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
 
-        if not ended:
-            self.status.config(text=message)
-            self.schedule_auto_spin()
+        if ended:
+            return
+
+        if is_relax:
+            duration = 5 * applied_multiplier
+            self.start_relax_timer(duration)
+            return
+
+        self.status.config(text=message)
+        self.schedule_auto_spin()
 
     def handle_special_result(
         self, index: int, display_winner: str, applied_multiplier: int = 1
