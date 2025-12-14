@@ -101,6 +101,8 @@ class WheelOfFortune:
         self.mercy_jobs: list[str] = []
         self.mercy_started = False
 
+        self.cooldown_jobs: list[str] = []
+
         self.base_names: list[str] = []
         self.item_modules: list[dict[str, int]] = []
 
@@ -108,6 +110,9 @@ class WheelOfFortune:
         self.bps = self.initial_bps
         self.special_targets_by_name: dict[str, int] = {}
         self.special_counts_by_name: dict[str, int] = {}
+        self.max_targets_by_name: dict[str, int] = {}
+        self.max_counts_by_name: dict[str, int] = {}
+        self.max_blocked_names: set[str] = set()
         self.game_over = False
         self.has_invalid_config = False
 
@@ -166,6 +171,9 @@ class WheelOfFortune:
         self.mercy_configs.clear()
         self.special_targets_by_name.clear()
         self.special_counts_by_name.clear()
+        self.max_targets_by_name.clear()
+        self.max_counts_by_name.clear()
+        self.max_blocked_names.clear()
         seen_modules: dict[str, dict[str, int | bool]] = {}
 
         parsed_items: list[str] = []
@@ -233,6 +241,16 @@ class WheelOfFortune:
                 modules["special_target"] = int(target_match.group(1))
                 continue
 
+            cooldown_match = re.fullmatch(r"cooldown\s+(\d+)", lower)
+            if cooldown_match:
+                modules["cooldown"] = int(cooldown_match.group(1))
+                continue
+
+            max_match = re.fullmatch(r"max\s+(\d+)", lower)
+            if max_match:
+                modules["max"] = int(max_match.group(1))
+                continue
+
             bpm_match = re.fullmatch(r"\+\s*(\d+)", lower)
             if bpm_match:
                 modules["bpm_boost"] = int(bpm_match.group(1))
@@ -273,6 +291,12 @@ class WheelOfFortune:
                 self.special_targets_by_name[base_name] = target
                 self.special_counts_by_name[base_name] = 0
 
+        if "max" in modules:
+            target = int(modules["max"])
+            if base_name not in self.max_targets_by_name:
+                self.max_targets_by_name[base_name] = target
+                self.max_counts_by_name[base_name] = 0
+
     def format_item_label(self, idx: int) -> str:
         label = self.base_names[idx]
         modules = self.item_modules[idx]
@@ -290,6 +314,13 @@ class WheelOfFortune:
         color: str | None = None,
         register_mercy: bool = False,
     ) -> None:
+        if base_name in self.max_blocked_names:
+            return
+
+        if "max" in modules and base_name not in self.max_targets_by_name:
+            self.max_targets_by_name[base_name] = int(modules["max"])
+            self.max_counts_by_name[base_name] = 0
+
         if color is None:
             palette = self.generate_colors(len(self.items) + 1)
             color = palette[len(self.items)]
@@ -504,6 +535,14 @@ class WheelOfFortune:
                 pass
         self.mercy_jobs.clear()
 
+    def cancel_cooldown_jobs(self) -> None:
+        for job in self.cooldown_jobs:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        self.cooldown_jobs.clear()
+
     def start_mercy_timers_if_needed(self) -> None:
         if self.mercy_started:
             return
@@ -639,9 +678,37 @@ class WheelOfFortune:
         )
         self.pending_multiplier = 1
 
-        if "fragile" in modules and not ended:
+        max_ended, max_message = self.handle_max_result(base_name, display_winner)
+        if max_message:
+            message = max_message
+        ended = ended or max_ended
+        reached_max = False
+        if base_name in self.max_targets_by_name:
+            reached_max = (
+                self.max_counts_by_name.get(base_name, 0)
+                >= self.max_targets_by_name.get(base_name, 0)
+            )
+
+        if "fragile" in modules and not ended and not reached_max:
             message = self.handle_fragile_result(index, display_winner)
             ended = self.game_over
+
+        if (
+            "cooldown" in modules
+            and not ended
+            and base_name not in self.max_blocked_names
+            and not reached_max
+        ):
+            cooldown_index = None
+            for idx, name in enumerate(self.base_names):
+                if name == base_name:
+                    cooldown_index = idx
+                    break
+
+            if cooldown_index is not None:
+                ended, message = self.handle_cooldown_result(
+                    cooldown_index, display_winner
+                )
 
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
@@ -678,6 +745,75 @@ class WheelOfFortune:
             False,
             f"Result: {display_winner}. {name} chosen {display_current}/{target}. Press space to spin again.",
         )
+
+    def remove_all_items_by_base_name(self, base_name: str) -> int:
+        removed = 0
+        for idx in range(len(self.base_names) - 1, -1, -1):
+            if self.base_names[idx] == base_name:
+                removed += 1
+                self.remove_item(idx)
+        return removed
+
+    def handle_max_result(self, base_name: str, display_winner: str) -> tuple[bool, str | None]:
+        if base_name not in self.max_targets_by_name:
+            return False, None
+
+        self.max_counts_by_name[base_name] += 1
+        current = self.max_counts_by_name[base_name]
+        target = self.max_targets_by_name[base_name]
+        if current < target:
+            return False, (
+                f"{display_winner} progress {current}/{target} towards Max. Press space to spin again."
+            )
+
+        self.max_blocked_names.add(base_name)
+        removed = self.remove_all_items_by_base_name(base_name)
+        if not self.items:
+            message = f"{display_winner} reached Max {target}. No items remain."
+            self.end_game(message)
+            return True, message
+
+        return (
+            False,
+            f"{display_winner} reached Max {target}. Removed {removed} choice(s). Press space to spin again.",
+        )
+
+    def handle_cooldown_result(self, index: int, display_winner: str) -> tuple[bool, str]:
+        modules = self.item_modules[index]
+        base_name = self.base_names[index]
+        duration = int(modules.get("cooldown", 0))
+        if duration <= 0:
+            return False, f"Result: {display_winner}. Press space to spin again."
+
+        color = self.colors[index]
+        modules_copy = dict(modules)
+        self.remove_item(index)
+
+        job: str | None = None
+
+        def restore() -> None:
+            self.restore_cooldown_item(base_name, modules_copy, color)
+            if job in self.cooldown_jobs:
+                self.cooldown_jobs.remove(job)  # type: ignore[arg-type]
+
+        job = self.root.after(int(duration * 1000), restore)
+        self.cooldown_jobs.append(job)
+
+        if not self.items:
+            message = f"{display_winner} is on cooldown for {duration} seconds. No items remain."
+            self.end_game(message)
+            return True, message
+
+        return (
+            False,
+            f"{display_winner} is on cooldown for {duration} seconds. Press space to spin again.",
+        )
+
+    def restore_cooldown_item(
+        self, base_name: str, modules: dict[str, int], color: str | None
+    ) -> None:
+        self.add_item_with_modules(base_name, modules, color)
+        self.draw_wheel()
 
     def start_relax_timer(self, duration: float) -> None:
         self.break_active = True
@@ -751,6 +887,7 @@ class WheelOfFortune:
         self.cancel_heartbeat()
         self.cancel_break_timer()
         self.cancel_mercy_jobs()
+        self.cancel_cooldown_jobs()
         self.items = list(self.original_items)
         self.colors = self.generate_colors(len(self.items))
         self.parse_items_and_modules()
