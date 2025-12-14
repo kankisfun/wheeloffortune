@@ -379,6 +379,9 @@ class WheelOfFortune:
         if not self.heartbeat_enabled_var.get():
             return
 
+        if self.break_active:
+            return
+
         if self.heartbeat_sound is None:
             return
 
@@ -481,7 +484,9 @@ class WheelOfFortune:
             self.auto_spin_job = self.root.after(300, self.auto_spin_tick)
 
     def schedule_heartbeat(self) -> None:
-        self.cancel_heartbeat()
+        if self.heartbeat_job is not None:
+            return
+
         if self.heartbeat_enabled_var.get():
             interval_ms = max(1, int(60000 / max(1, self.bps)))
             self.heartbeat_job = self.root.after(interval_ms, self.heartbeat_tick)
