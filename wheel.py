@@ -75,6 +75,7 @@ class WheelOfFortune:
         self.auto_spin_job: str | None = None
         self.heartbeat_job: str | None = None
 
+        self.config_dir = Path(__file__).parent
         self.items = self.prompt_for_items()
         if not self.items:
             self.root.destroy()
@@ -142,6 +143,8 @@ class WheelOfFortune:
         except OSError as exc:
             messagebox.showerror("Error", f"Unable to read file: {exc}")
             return []
+
+        self.config_dir = Path(path).parent
 
         items = [line.strip() for line in lines if line.strip()]
         if not items:
@@ -365,8 +368,23 @@ class WheelOfFortune:
             )
 
     def load_sound_file(self, filename: str):  # type: ignore[override]
-        path = Path(__file__).with_name(filename)
-        if not path.exists():
+        candidate_paths = []
+        name = Path(filename)
+        if name.is_absolute():
+            candidate_paths.append(name)
+        else:
+            if hasattr(self, "config_dir"):
+                candidate_paths.append(Path(self.config_dir) / name)
+            candidate_paths.append(Path(__file__).with_name(filename))
+            candidate_paths.append(Path.cwd() / name)
+
+        path: Path | None = None
+        for candidate in candidate_paths:
+            if candidate.exists():
+                path = candidate
+                break
+
+        if path is None:
             return None
 
         if simpleaudio is not None:
