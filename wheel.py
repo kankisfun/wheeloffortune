@@ -793,7 +793,15 @@ class WheelOfFortune:
 
     def finish_spin(self) -> None:
         self.spinning = False
+        if not self.items:
+            self.end_game("No items remain. Ending game.")
+            return
+
         index = self.pointer_index()
+        if index >= len(self.base_names):
+            self.end_game("All items were removed during the spin.")
+            return
+
         self.last_pointer_index = index
         winner = self.items[index]
         base_name = self.base_names[index]
