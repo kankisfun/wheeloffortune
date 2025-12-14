@@ -30,6 +30,10 @@ class WheelOfFortune:
         top_bar = tk.Frame(self.root)
         top_bar.pack(fill="x", padx=10, pady=(10, 0))
 
+        self.timer_label = tk.Label(top_bar, font=("Arial", 12, "bold"))
+        self.timer_label.config(text="Timer: 00:00")
+        self.timer_label.pack(side="left")
+
         self.bpm_label = tk.Label(top_bar, font=("Arial", 12, "bold"))
         self.bpm_label.pack(side="right")
 
@@ -42,20 +46,15 @@ class WheelOfFortune:
         )
         self.canvas.pack()
 
-        self.status = tk.Label(self.root, text="Press space to spin", font=("Arial", 14))
+        self.status = tk.Label(self.root, text="Press Start to spin", font=("Arial", 14))
         self.status.pack(pady=10)
 
-        self.auto_spin_var = tk.BooleanVar(value=False)
+        self.auto_spin_var = tk.BooleanVar(value=True)
         self.heartbeat_enabled_var = tk.BooleanVar(value=True)
         bottom_bar = tk.Frame(self.root)
         bottom_bar.pack(fill="x", pady=5)
-        self.auto_spin_check = tk.Checkbutton(
-            bottom_bar,
-            text="Automatic spinning",
-            variable=self.auto_spin_var,
-            command=self.toggle_auto_spin,
-        )
-        self.auto_spin_check.pack(side="right", padx=10)
+        self.auto_spin_label = tk.Label(bottom_bar, text="Automatic spinning enabled")
+        self.auto_spin_label.pack(side="right", padx=10)
 
         self.restart_button = tk.Button(
             bottom_bar,
@@ -63,6 +62,13 @@ class WheelOfFortune:
             command=self.restart_game,
         )
         self.restart_button.pack(side="right", padx=10)
+
+        self.start_button = tk.Button(
+            bottom_bar,
+            text="Start spinning",
+            command=self.start_spin,
+        )
+        self.start_button.pack(side="left", padx=10)
 
         self.heartbeat_check = tk.Checkbutton(
             bottom_bar,
@@ -89,10 +95,12 @@ class WheelOfFortune:
         self.break_active = False
         self.break_end_time = 0.0
         self.break_timer_job: str | None = None
+        self.timer_job: str | None = None
         self.jitter = 0.02
         self.initial_speed = 0.0
         self.deceleration = 0.0
         self.spin_start = 0.0
+        self.first_spin_time: float | None = None
         self.last_update = 0.0
         self.last_pointer_index = 0
         self.sound_cache: dict[str, object | None] = {}
@@ -126,7 +134,6 @@ class WheelOfFortune:
 
         self.update_bpm_display()
 
-        self.root.bind("<space>", self.start_spin)
         self.draw_wheel()
         self.last_pointer_index = self.pointer_index()
         self.schedule_heartbeat()
@@ -289,6 +296,10 @@ class WheelOfFortune:
 
             if lower == "missing":
                 modules["missing"] = True
+                continue
+
+            if lower == "reset":
+                modules["reset_timer"] = True
                 continue
 
         return modules
@@ -568,14 +579,6 @@ class WheelOfFortune:
         relative = (sector_angle / 2 - self.angle_offset) % 360
         return int(relative // sector_angle)
 
-    def toggle_auto_spin(self) -> None:
-        if self.auto_spin_var.get():
-            self.status.config(text="Automatic spinning enabled. Press space to spin manually.")
-            self.schedule_auto_spin()
-        else:
-            self.status.config(text="Press space to spin")
-            self.cancel_auto_spin()
-
     def toggle_heartbeat(self) -> None:
         if self.heartbeat_enabled_var.get():
             self.schedule_heartbeat()
@@ -609,6 +612,29 @@ class WheelOfFortune:
         if self.heartbeat_job is not None:
             self.root.after_cancel(self.heartbeat_job)
             self.heartbeat_job = None
+
+    def schedule_timer_update(self) -> None:
+        if self.timer_job is None:
+            self.timer_job = self.root.after(500, self.update_timer_label)
+
+    def update_timer_label(self) -> None:
+        if self.first_spin_time is None:
+            self.timer_label.config(text="Timer: 00:00")
+        else:
+            elapsed = time.perf_counter() - self.first_spin_time
+            minutes, seconds = divmod(int(elapsed), 60)
+            self.timer_label.config(text=f"Timer: {minutes:02d}:{seconds:02d}")
+        self.timer_job = self.root.after(500, self.update_timer_label)
+
+    def cancel_timer(self) -> None:
+        if self.timer_job is not None:
+            self.root.after_cancel(self.timer_job)
+            self.timer_job = None
+
+    def reset_spin_timer(self) -> None:
+        self.first_spin_time = time.perf_counter()
+        self.cancel_timer()
+        self.update_timer_label()
 
     def cancel_mercy_jobs(self) -> None:
         for job in self.mercy_jobs:
@@ -684,6 +710,10 @@ class WheelOfFortune:
             self.status.config(text="No available choices. Adjust BPM or restart.")
             return
 
+        if self.first_spin_time is None:
+            self.first_spin_time = time.perf_counter()
+            self.schedule_timer_update()
+
         self.start_mercy_timers_if_needed()
         self.spinning = True
         self.spin_start = time.perf_counter()
@@ -743,7 +773,7 @@ class WheelOfFortune:
 
         if multiplier_value is not None:
             self.pending_multiplier *= multiplier_value
-            self.status.config(text=f"Result: {winner}. Press space to spin again.")
+            self.status.config(text=f"Result: {winner}. Spinning again shortly.")
             self.schedule_auto_spin()
             return
 
@@ -780,6 +810,10 @@ class WheelOfFortune:
             if filename not in self.sound_cache:
                 self.sound_cache[filename] = self.load_sound_file(filename)
             self.play_sound(self.sound_cache.get(filename))
+
+        if modules.get("reset_timer"):
+            self.reset_spin_timer()
+            module_messages.append("Timer reset.")
 
         ended, message = self.handle_special_result(
             index, display_winner, applied_multiplier
@@ -837,7 +871,7 @@ class WheelOfFortune:
     ) -> tuple[bool, str]:
         base_name = self.base_names[index]
         if base_name not in self.special_targets_by_name:
-            return False, f"Result: {display_winner}. Press space to spin again."
+            return False, f"Result: {display_winner}. Spinning again shortly."
 
         self.special_counts_by_name[base_name] += max(1, applied_multiplier)
         target = self.special_targets_by_name[base_name]
@@ -851,7 +885,7 @@ class WheelOfFortune:
 
         return (
             False,
-            f"Result: {display_winner}. {name} chosen {display_current}/{target}. Press space to spin again.",
+            f"Result: {display_winner}. {name} chosen {display_current}/{target}. Spinning again shortly.",
         )
 
     def remove_all_items_by_base_name(self, base_name: str) -> int:
@@ -871,7 +905,7 @@ class WheelOfFortune:
         target = self.max_targets_by_name[base_name]
         if current < target:
             return False, (
-                f"{display_winner} progress {current}/{target} towards Max. Press space to spin again."
+                f"{display_winner} progress {current}/{target} towards Max. Spinning again shortly."
             )
 
         self.max_blocked_names.add(base_name)
@@ -883,7 +917,7 @@ class WheelOfFortune:
 
         return (
             False,
-            f"{display_winner} reached Max {target}. Removed {removed} choice(s). Press space to spin again.",
+            f"{display_winner} reached Max {target}. Removed {removed} choice(s). Spinning again shortly.",
         )
 
     def handle_cooldown_result(self, index: int, display_winner: str) -> tuple[bool, str]:
@@ -891,7 +925,7 @@ class WheelOfFortune:
         base_name = self.base_names[index]
         duration = int(modules.get("cooldown", 0))
         if duration <= 0:
-            return False, f"Result: {display_winner}. Press space to spin again."
+            return False, f"Result: {display_winner}. Spinning again shortly."
 
         color = self.colors[index]
         modules_copy = dict(modules)
@@ -914,7 +948,7 @@ class WheelOfFortune:
 
         return (
             False,
-            f"{display_winner} is on cooldown for {duration} seconds. Press space to spin again.",
+            f"{display_winner} is on cooldown for {duration} seconds. Spinning again shortly.",
         )
 
     def restore_cooldown_item(
@@ -938,7 +972,7 @@ class WheelOfFortune:
                 self.status.config(text="Relax over. Spinning automatically.")
                 self.start_spin()
             else:
-                self.status.config(text="Relax over. Press space to spin.")
+                self.status.config(text="Relax over. Spinning automatically.")
             return
 
         seconds_left = max(1, math.ceil(remaining))
@@ -947,7 +981,6 @@ class WheelOfFortune:
 
     def end_game(self, message: str) -> None:
         self.game_over = True
-        self.auto_spin_var.set(False)
         self.cancel_auto_spin()
         self.cancel_break_timer()
         self.break_active = False
@@ -970,7 +1003,7 @@ class WheelOfFortune:
             return end_message
 
         return (
-            f"{display_winner} was destroyed after being chosen. Press space to spin again."
+            f"{display_winner} was destroyed after being chosen. Spinning again shortly."
         )
 
     def remove_item(self, index: int) -> None:
@@ -1007,12 +1040,15 @@ class WheelOfFortune:
         self.angle_offset = 0.0
         self.break_active = False
         self.break_end_time = 0.0
-        self.auto_spin_var.set(False)
+        self.auto_spin_var.set(True)
         self.last_pointer_index = self.pointer_index()
+        self.cancel_timer()
+        self.first_spin_time = None
+        self.timer_label.config(text="Timer: 00:00")
         self.draw_wheel()
         self.schedule_heartbeat()
         self.update_bpm_display()
-        self.status.config(text="Press space to spin")
+        self.status.config(text="Press Start to spin")
 
     def run(self) -> None:
         if self.items:
