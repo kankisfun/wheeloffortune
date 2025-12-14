@@ -608,7 +608,8 @@ class WheelOfFortune:
             return 0
         sector_angle = 360 / len(self.items)
         relative = (sector_angle / 2 - self.angle_offset) % 360
-        return int(relative // sector_angle)
+        index = int(relative // sector_angle)
+        return min(index, len(self.items) - 1)
 
     def toggle_heartbeat(self) -> None:
         if self.heartbeat_enabled_var.get():
@@ -793,7 +794,15 @@ class WheelOfFortune:
 
     def finish_spin(self) -> None:
         self.spinning = False
+        if not self.items:
+            self.end_game("No items remain. Ending game.")
+            return
+
         index = self.pointer_index()
+        if index >= len(self.base_names):
+            self.end_game("All items were removed during the spin.")
+            return
+
         self.last_pointer_index = index
         winner = self.items[index]
         base_name = self.base_names[index]
