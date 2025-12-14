@@ -1,3 +1,4 @@
-Red (1/4)
-2x
-Short Breath (Fragile) (Missing) (Mercy 1 4)
+Red (+5)
+Blue (*1.1)
+Green (> 120) (Mercy 40 0) (Fragile)
+Yellow (> 110) (Mercy 0 30)
