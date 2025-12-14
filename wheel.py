@@ -516,6 +516,21 @@ class WheelOfFortune:
     def load_heartbeat_sound(self):  # type: ignore[override]
         return self.load_sound_file("Heartbeat.wav")
 
+    def heartbeat_filename_for_bpm(self, bpm: int) -> str:
+        if bpm >= 240:
+            return "Heartbeat_240.wav"
+        if bpm >= 210:
+            return "Heartbeat_210.wav"
+        if bpm >= 180:
+            return "Heartbeat_180.wav"
+        if bpm >= 150:
+            return "Heartbeat_150.wav"
+        if bpm >= 120:
+            return "Heartbeat_120.wav"
+        if bpm >= 90:
+            return "Heartbeat_90.wav"
+        return "Heartbeat.wav"
+
     def play_sound(self, sound: object | None) -> None:
         if sound is None:
             return
@@ -546,7 +561,15 @@ class WheelOfFortune:
         if self.break_active:
             return
 
-        self.play_sound(self.heartbeat_sound)
+        filename = self.heartbeat_filename_for_bpm(self.display_bps_value())
+        if filename not in self.sound_cache:
+            self.sound_cache[filename] = self.load_sound_file(filename)
+
+        sound = self.sound_cache.get(filename)
+        if sound is None:
+            sound = self.heartbeat_sound
+
+        self.play_sound(sound)
 
     def draw_wheel(self) -> None:
         self.canvas.delete("all")
