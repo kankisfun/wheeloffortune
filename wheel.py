@@ -872,6 +872,19 @@ class WheelOfFortune:
             self.schedule_heartbeat()
             self.apply_bps_conditions()
 
+            if not self.items or not self.base_names:
+                self.end_game("All items were removed during the spin.")
+                return
+
+            index = self.pointer_index()
+            if index >= len(self.base_names):
+                index = len(self.base_names) - 1
+
+            self.last_pointer_index = index
+            winner = self.items[index]
+            base_name = self.base_names[index]
+            modules = self.item_modules[index]
+
         if "sound_effect" in modules:
             filename = str(modules["sound_effect"])
             if filename not in self.sound_cache:
