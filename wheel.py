@@ -836,15 +836,17 @@ class WheelOfFortune:
         is_relax = lowered_winner == "relax"
         applied_multiplier = self.pending_multiplier
 
+        display_winner = winner
+        if applied_multiplier > 1:
+            display_winner = f"{applied_multiplier}x {winner}"
+
+        self.log_recent_selection(display_winner)
+
         if multiplier_value is not None:
             self.pending_multiplier *= multiplier_value
             self.status.config(text=f"Result: {winner}. Spinning again shortly.")
             self.schedule_auto_spin()
             return
-
-        display_winner = winner
-        if applied_multiplier > 1:
-            display_winner = f"{applied_multiplier}x {winner}"
 
         module_messages = []
         bpm_changed = False
@@ -930,6 +932,9 @@ class WheelOfFortune:
 
         self.status.config(text=message)
         self.schedule_auto_spin()
+
+    def log_recent_selection(self, selection: str) -> None:
+        print(f"Selected: {selection}")
 
     def handle_special_result(
         self, index: int, display_winner: str, applied_multiplier: int = 1
