@@ -107,6 +107,7 @@ class WheelOfFortune:
 
         self.base_names: list[str] = []
         self.item_modules: list[dict[str, int | bool | float | str]] = []
+        self.hidden_items: list[dict[str, str | dict[str, int | bool | float | str] | None]] = []
 
         self.initial_bps = 60
         self.bps = self.initial_bps
@@ -206,6 +207,8 @@ class WheelOfFortune:
 
         self.colors = self.generate_colors(non_missing_count)
 
+        self.hidden_items.clear()
+
         color_idx = 0
         for base_name, modules, is_missing in parsed_entries:
             color = self.colors[color_idx] if not is_missing else None
@@ -221,6 +224,7 @@ class WheelOfFortune:
                 self.register_modules(None, base_name, modules, color)
 
         self.items = parsed_items
+        self.apply_bps_conditions()
 
     @staticmethod
     def extract_base_and_modules(item: str) -> tuple[str, list[str]]:
@@ -265,6 +269,16 @@ class WheelOfFortune:
                 modules["bpm_multiplier"] = float(multiplier_match.group(1))
                 continue
 
+            greater_than_match = re.fullmatch(r">\s*(-?\d+)", lower)
+            if greater_than_match:
+                modules["bps_min"] = int(greater_than_match.group(1))
+                continue
+
+            less_than_match = re.fullmatch(r"<\s*(-?\d+)", lower)
+            if less_than_match:
+                modules["bps_max"] = int(less_than_match.group(1))
+                continue
+
             if lower.endswith(".wav"):
                 modules["sound_effect"] = module_text.strip()
                 continue
@@ -278,6 +292,16 @@ class WheelOfFortune:
                 continue
 
         return modules
+
+    def is_item_allowed_by_bps(self, modules: dict[str, int | bool | float | str]) -> bool:
+        min_bps = modules.get("bps_min")
+        max_bps = modules.get("bps_max")
+
+        if isinstance(min_bps, int) and self.bps <= min_bps:
+            return False
+        if isinstance(max_bps, int) and self.bps >= max_bps:
+            return False
+        return True
 
     def register_modules(
         self,
@@ -327,7 +351,14 @@ class WheelOfFortune:
         color: str | None = None,
         register_mercy: bool = False,
     ) -> None:
+        modules = copy.deepcopy(modules)
         if base_name in self.max_blocked_names:
+            return
+
+        if not self.is_item_allowed_by_bps(modules):
+            self.hidden_items.append(
+                {"base_name": base_name, "modules": modules, "color": color}
+            )
             return
 
         if "max" in modules and base_name not in self.max_targets_by_name:
@@ -366,6 +397,45 @@ class WheelOfFortune:
                     "modules": copy.deepcopy(modules),
                 }
             )
+
+    def apply_bps_conditions(self) -> None:
+        removed_any = False
+        for idx in range(len(self.item_modules) - 1, -1, -1):
+            modules = self.item_modules[idx]
+            if self.is_item_allowed_by_bps(modules):
+                continue
+
+            record: dict[str, str | dict[str, int | bool | float | str] | None] = {
+                "base_name": self.base_names[idx],
+                "modules": copy.deepcopy(modules),
+                "color": self.colors[idx],
+            }
+            self.hidden_items.append(record)
+            self.remove_item(idx)
+            removed_any = True
+
+        added_any = False
+        for record in list(self.hidden_items):
+            modules = record.get("modules")
+            base_name = record.get("base_name")
+            color = record.get("color")
+            if not isinstance(modules, dict) or not isinstance(base_name, str):
+                continue
+
+            if not self.is_item_allowed_by_bps(modules):
+                continue
+
+            self.add_item_with_modules(
+                base_name,
+                copy.deepcopy(modules),
+                str(color) if color else None,
+                register_mercy=False,
+            )
+            self.hidden_items.remove(record)
+            added_any = True
+
+        if removed_any or added_any:
+            self.draw_wheel()
 
     def load_sound_file(self, filename: str):  # type: ignore[override]
         candidate_paths = []
@@ -438,6 +508,8 @@ class WheelOfFortune:
 
     def draw_wheel(self) -> None:
         self.canvas.delete("all")
+        if not self.items:
+            return
         sector_angle = 360 / len(self.items)
         pointer_angle = 90
         bbox = (
@@ -490,6 +562,8 @@ class WheelOfFortune:
         )
 
     def pointer_index(self) -> int:
+        if not self.items:
+            return 0
         sector_angle = 360 / len(self.items)
         relative = (sector_angle / 2 - self.angle_offset) % 360
         return int(relative // sector_angle)
@@ -606,6 +680,9 @@ class WheelOfFortune:
             return
         if self.spinning:
             return
+        if not self.items:
+            self.status.config(text="No available choices. Adjust BPM or restart.")
+            return
 
         self.start_mercy_timers_if_needed()
         self.spinning = True
@@ -682,18 +759,21 @@ class WheelOfFortune:
             self.bps *= total_multiplier
             bpm_changed = True
             module_messages.append(
-                f"BPM multiplied by {total_multiplier} to {self.bps}."
+                f"BPM multiplied by {total_multiplier} to {self.display_bps_value()}."
             )
 
         if "bpm_boost" in modules:
             boost = modules["bpm_boost"] * applied_multiplier
             self.bps += boost
             bpm_changed = True
-            module_messages.append(f"BPM increased by {boost} to {self.bps}.")
+            module_messages.append(
+                f"BPM increased by {boost} to {self.display_bps_value()}."
+            )
 
         if bpm_changed:
             self.update_bpm_display()
             self.schedule_heartbeat()
+            self.apply_bps_conditions()
 
         if "sound_effect" in modules:
             filename = str(modules["sound_effect"])
@@ -938,8 +1018,11 @@ class WheelOfFortune:
         if self.items:
             self.root.mainloop()
 
+    def display_bps_value(self) -> int:
+        return int(round(self.bps))
+
     def bpm_text(self) -> str:
-        return f"BPM: {self.bps}"
+        return f"BPM: {self.display_bps_value()}"
 
     def update_bpm_display(self) -> None:
         self.bpm_label.config(text=self.bpm_text())
