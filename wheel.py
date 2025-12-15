@@ -844,7 +844,7 @@ class WheelOfFortune:
 
         if multiplier_value is not None:
             self.pending_multiplier *= multiplier_value
-            self.status.config(text=f"Result: {winner}. Spinning again shortly.")
+            self.status.config(text=f"Result: {winner}.")
             self.schedule_auto_spin()
             return
 
@@ -953,7 +953,7 @@ class WheelOfFortune:
         self, base_name: str, display_winner: str, applied_multiplier: int = 1
     ) -> tuple[bool, str]:
         if base_name not in self.special_targets_by_name:
-            return False, f"Result: {display_winner}. Spinning again shortly."
+            return False, f"Result: {display_winner}."
 
         self.special_counts_by_name[base_name] += max(1, applied_multiplier)
         target = self.special_targets_by_name[base_name]
@@ -967,7 +967,7 @@ class WheelOfFortune:
 
         return (
             False,
-            f"Result: {display_winner}. {name} chosen {display_current}/{target}. Spinning again shortly.",
+            f"Result: {display_winner}. {name} chosen {display_current}/{target}.",
         )
 
     def remove_all_items_by_base_name(self, base_name: str) -> int:
@@ -987,7 +987,7 @@ class WheelOfFortune:
         target = self.max_targets_by_name[base_name]
         if current < target:
             return False, (
-                f"{display_winner} progress {current}/{target} towards Max. Spinning again shortly."
+                f"{display_winner} progress {current}/{target} towards Max."
             )
 
         self.max_blocked_names.add(base_name)
@@ -999,7 +999,7 @@ class WheelOfFortune:
 
         return (
             False,
-            f"{display_winner} reached Max {target}. Removed {removed} choice(s). Spinning again shortly.",
+            f"{display_winner} reached Max {target}. Removed {removed} choice(s).",
         )
 
     def handle_cooldown_result(self, index: int, display_winner: str) -> tuple[bool, str]:
@@ -1007,7 +1007,7 @@ class WheelOfFortune:
         base_name = self.base_names[index]
         duration = int(modules.get("cooldown", 0))
         if duration <= 0:
-            return False, f"Result: {display_winner}. Spinning again shortly."
+            return False, f"Result: {display_winner}."
 
         color = self.colors[index]
         modules_copy = dict(modules)
@@ -1030,7 +1030,7 @@ class WheelOfFortune:
 
         return (
             False,
-            f"{display_winner} is on cooldown for {duration} seconds. Spinning again shortly.",
+            f"{display_winner} is on cooldown for {duration} seconds.",
         )
 
     def restore_cooldown_item(
@@ -1084,9 +1084,7 @@ class WheelOfFortune:
             self.end_game(end_message)
             return end_message
 
-        return (
-            f"{display_winner} was destroyed after being chosen. Spinning again shortly."
-        )
+        return f"{display_winner} was destroyed after being chosen."
 
     def remove_item(self, index: int) -> None:
         if index < 0 or index >= len(self.items):
