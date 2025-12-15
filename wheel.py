@@ -2,10 +2,15 @@ import copy
 import math
 import random
 import re
+import threading
 import time
 import tkinter as tk
+from collections import deque
 from pathlib import Path
 from tkinter import filedialog, messagebox
+
+import numpy as np
+import sounddevice as sd
 
 try:
     import simpleaudio  # type: ignore
@@ -16,6 +21,111 @@ try:
     import winsound  # type: ignore
 except Exception:  # pragma: no cover - fallback for non-Windows platforms
     winsound = None  # type: ignore
+
+
+class HeartbeatAudio:
+    MAX_BPS = 600
+
+    def __init__(self, bps: float, enabled: bool) -> None:
+        self.sample_rate = self._choose_sample_rate()
+        self.sample_cursor = 0
+        self.next_beat_sample = 0.0
+        self.bps = 0.0
+        self.interval_samples = 0.0
+        self.enabled = False
+        self.events: deque[float] = deque()
+        self.lock = threading.Lock()
+        self.click_wave = self.generate_click_wave()
+        self.set_bps(bps)
+        self.set_enabled(enabled)
+        self.stream = sd.OutputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype="float32",
+            callback=self.audio_callback,
+        )
+        self.stream.start()
+
+    def _choose_sample_rate(self) -> int:
+        try:
+            device = sd.query_devices(kind="output")
+            default_samplerate = device.get("default_samplerate")
+            if default_samplerate:
+                return int(default_samplerate)
+        except Exception:
+            pass
+        fallback = sd.default.samplerate
+        if fallback:
+            return int(fallback)
+        return 44100
+
+    def generate_click_wave(self) -> np.ndarray:
+        duration = 0.03
+        t = np.linspace(0, duration, int(self.sample_rate * duration), False)
+        envelope = np.exp(-50 * t)
+        wave = 0.3 * np.sin(2 * np.pi * 1000 * t) * envelope
+        return wave.astype(np.float32)
+
+    def set_bps(self, bps: float) -> None:
+        clamped = min(max(bps, 0.0), self.MAX_BPS)
+        with self.lock:
+            if clamped == self.bps:
+                return
+            self.bps = clamped
+            if clamped <= 0:
+                self.interval_samples = 0.0
+                self.next_beat_sample = float(self.sample_cursor)
+            else:
+                self.interval_samples = float(self.sample_rate) / clamped
+                if self.sample_cursor == 0:
+                    self.next_beat_sample = 0.0
+                else:
+                    self.next_beat_sample = float(self.sample_cursor) + self.interval_samples
+
+    def set_enabled(self, enabled: bool) -> None:
+        with self.lock:
+            self.enabled = enabled
+
+    def audio_callback(self, outdata, frames, time_info, status):  # type: ignore[override]
+        buffer = np.zeros((frames, 1), dtype=np.float32)
+        with self.lock:
+            bps = self.bps
+            enabled = self.enabled and bps > 0
+            interval = self.interval_samples if enabled else 0.0
+            next_sample = self.next_beat_sample
+            click_wave = self.click_wave
+
+        start_sample = self.sample_cursor
+        end_sample = start_sample + frames
+        beat_count = 0
+
+        if enabled and interval > 0:
+            while next_sample < end_sample:
+                start_idx = int(next_sample - start_sample)
+                end_idx = min(start_idx + len(click_wave), frames)
+                buffer[start_idx:end_idx, 0] += click_wave[: end_idx - start_idx]
+                next_sample += interval
+                beat_count += 1
+
+        with self.lock:
+            self.next_beat_sample = next_sample if enabled else end_sample
+            if beat_count:
+                self.events.extend([time.perf_counter()] * beat_count)
+        self.sample_cursor = end_sample
+        outdata[:, 0] = buffer[:, 0]
+
+    def consume_beat_events(self) -> int:
+        with self.lock:
+            count = len(self.events)
+            self.events.clear()
+        return count
+
+    def stop(self) -> None:
+        try:
+            self.stream.stop()
+            self.stream.close()
+        except Exception:
+            pass
 
 
 class WheelOfFortune:
@@ -80,6 +190,7 @@ class WheelOfFortune:
 
         self.auto_spin_job: str | None = None
         self.heartbeat_job: str | None = None
+        self.heartbeat_audio: HeartbeatAudio | None = None
 
         self.config_dir = Path(__file__).parent
         self.items = self.prompt_for_items()
@@ -105,7 +216,6 @@ class WheelOfFortune:
         self.last_pointer_index = 0
         self.sound_cache: dict[str, object | None] = {}
         self.click_sound = self.load_click_sound()
-        self.heartbeat_sound = self.load_heartbeat_sound()
 
         self.mercy_configs: list[dict[str, int | str]] = []
         self.mercy_jobs: list[str] = []
@@ -118,7 +228,7 @@ class WheelOfFortune:
         self.hidden_items: list[dict[str, str | dict[str, int | bool | float | str] | None]] = []
 
         self.initial_bps = 60
-        self.bps = self.initial_bps
+        self.bps = self.clamp_bps(self.initial_bps)
         self.special_targets_by_name: dict[str, int] = {}
         self.special_counts_by_name: dict[str, int] = {}
         self.max_targets_by_name: dict[str, int] = {}
@@ -513,24 +623,6 @@ class WheelOfFortune:
     def load_click_sound(self):  # type: ignore[override]
         return self.load_sound_file("click.wav")
 
-    def load_heartbeat_sound(self):  # type: ignore[override]
-        return self.load_sound_file("Heartbeat.wav")
-
-    def heartbeat_filename_for_bpm(self, bpm: int) -> str:
-        if bpm >= 240:
-            return "Heartbeat_240.wav"
-        if bpm >= 210:
-            return "Heartbeat_210.wav"
-        if bpm >= 180:
-            return "Heartbeat_180.wav"
-        if bpm >= 150:
-            return "Heartbeat_150.wav"
-        if bpm >= 120:
-            return "Heartbeat_120.wav"
-        if bpm >= 90:
-            return "Heartbeat_90.wav"
-        return "Heartbeat.wav"
-
     def play_sound(self, sound: object | None) -> None:
         if sound is None:
             return
@@ -553,23 +645,6 @@ class WheelOfFortune:
 
     def play_click_sound(self) -> None:
         self.play_sound(self.click_sound)
-
-    def play_heartbeat_sound(self) -> None:
-        if not self.heartbeat_enabled_var.get():
-            return
-
-        if self.break_active:
-            return
-
-        filename = self.heartbeat_filename_for_bpm(self.display_bps_value())
-        if filename not in self.sound_cache:
-            self.sound_cache[filename] = self.load_sound_file(filename)
-
-        sound = self.sound_cache.get(filename)
-        if sound is None:
-            sound = self.heartbeat_sound
-
-        self.play_sound(sound)
 
     def draw_wheel(self) -> None:
         self.canvas.delete("all")
@@ -635,10 +710,17 @@ class WheelOfFortune:
         return min(index, len(self.items) - 1)
 
     def toggle_heartbeat(self) -> None:
-        if self.heartbeat_enabled_var.get():
-            self.schedule_heartbeat()
+        self.schedule_heartbeat()
+
+    def heartbeat_allowed(self) -> bool:
+        return self.heartbeat_enabled_var.get() and not self.break_active
+
+    def refresh_heartbeat_audio(self) -> None:
+        if self.heartbeat_audio is None:
+            self.heartbeat_audio = HeartbeatAudio(self.bps, self.heartbeat_allowed())
         else:
-            self.cancel_heartbeat()
+            self.heartbeat_audio.set_bps(self.bps)
+            self.heartbeat_audio.set_enabled(self.heartbeat_allowed())
 
     def schedule_auto_spin(self) -> None:
         self.cancel_auto_spin()
@@ -651,12 +733,11 @@ class WheelOfFortune:
             self.auto_spin_job = self.root.after(300, self.auto_spin_tick)
 
     def schedule_heartbeat(self) -> None:
+        self.refresh_heartbeat_audio()
         if self.heartbeat_job is not None:
             return
 
-        if self.heartbeat_enabled_var.get():
-            interval_ms = max(1, int(60000 / max(1, self.bps)))
-            self.heartbeat_job = self.root.after(interval_ms, self.heartbeat_tick)
+        self.heartbeat_job = self.root.after(5, self.heartbeat_tick)
 
     def cancel_auto_spin(self) -> None:
         if self.auto_spin_job is not None:
@@ -667,6 +748,9 @@ class WheelOfFortune:
         if self.heartbeat_job is not None:
             self.root.after_cancel(self.heartbeat_job)
             self.heartbeat_job = None
+
+        if self.heartbeat_audio is not None:
+            self.heartbeat_audio.set_enabled(False)
 
     def schedule_timer_update(self) -> None:
         if self.timer_job is None:
@@ -752,7 +836,8 @@ class WheelOfFortune:
 
     def heartbeat_tick(self) -> None:
         self.heartbeat_job = None
-        self.play_heartbeat_sound()
+        if self.heartbeat_audio is not None:
+            self.heartbeat_audio.consume_beat_events()
         self.schedule_heartbeat()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
@@ -853,7 +938,7 @@ class WheelOfFortune:
         if "bpm_multiplier" in modules:
             multiplier = float(modules["bpm_multiplier"])
             total_multiplier = math.pow(multiplier, applied_multiplier)
-            self.bps *= total_multiplier
+            self.bps = self.clamp_bps(self.bps * total_multiplier)
             bpm_changed = True
             module_messages.append(
                 f"BPM multiplied by {total_multiplier} to {self.display_bps_value()}."
@@ -861,7 +946,7 @@ class WheelOfFortune:
 
         if "bpm_boost" in modules:
             boost = modules["bpm_boost"] * applied_multiplier
-            self.bps += boost
+            self.bps = self.clamp_bps(self.bps + boost)
             bpm_changed = True
             module_messages.append(
                 f"BPM increased by {boost} to {self.display_bps_value()}."
@@ -1043,6 +1128,7 @@ class WheelOfFortune:
         self.break_active = True
         self.break_end_time = time.perf_counter() + duration
         self.cancel_auto_spin()
+        self.refresh_heartbeat_audio()
         self.update_relax_timer()
 
     def update_relax_timer(self) -> None:
@@ -1050,6 +1136,7 @@ class WheelOfFortune:
         if remaining <= 0:
             self.break_active = False
             self.break_timer_job = None
+            self.refresh_heartbeat_audio()
             if self.auto_spin_var.get():
                 self.status.config(text="Relax over. Spinning automatically.")
                 self.start_spin()
@@ -1116,7 +1203,7 @@ class WheelOfFortune:
         self.game_over = False
         self.spinning = False
         self.pending_multiplier = 1
-        self.bps = self.initial_bps
+        self.bps = self.clamp_bps(self.initial_bps)
         self.angle_offset = 0.0
         self.break_active = False
         self.break_end_time = 0.0
@@ -1133,6 +1220,9 @@ class WheelOfFortune:
     def run(self) -> None:
         if self.items:
             self.root.mainloop()
+
+    def clamp_bps(self, value: float) -> float:
+        return min(value, HeartbeatAudio.MAX_BPS)
 
     def display_bps_value(self) -> int:
         return int(round(self.bps))
