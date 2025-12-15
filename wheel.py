@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover - fallback for non-Windows platforms
 
 
 class HeartbeatAudio:
-    MAX_BPS = 600
+    MAX_BPS = 10
 
     def __init__(self, bps: float, enabled: bool) -> None:
         self.sample_rate = self._choose_sample_rate()
@@ -129,6 +129,8 @@ class HeartbeatAudio:
 
 
 class WheelOfFortune:
+    MAX_BPM = HeartbeatAudio.MAX_BPS * 60
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Wheel of Fortune")
@@ -717,9 +719,11 @@ class WheelOfFortune:
 
     def refresh_heartbeat_audio(self) -> None:
         if self.heartbeat_audio is None:
-            self.heartbeat_audio = HeartbeatAudio(self.bps, self.heartbeat_allowed())
+            self.heartbeat_audio = HeartbeatAudio(
+                self.bps / 60.0, self.heartbeat_allowed()
+            )
         else:
-            self.heartbeat_audio.set_bps(self.bps)
+            self.heartbeat_audio.set_bps(self.bps / 60.0)
             self.heartbeat_audio.set_enabled(self.heartbeat_allowed())
 
     def schedule_auto_spin(self) -> None:
@@ -1222,7 +1226,7 @@ class WheelOfFortune:
             self.root.mainloop()
 
     def clamp_bps(self, value: float) -> float:
-        return min(value, HeartbeatAudio.MAX_BPS)
+        return min(value, self.MAX_BPM)
 
     def display_bps_value(self) -> int:
         return int(round(self.bps))
