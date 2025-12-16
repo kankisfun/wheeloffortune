@@ -96,9 +96,12 @@ class WheelOfFortune:
         self.angle_offset = 0.0
         self.spinning = False
         self.pending_multiplier = 1
-        self.break_active = False
-        self.break_end_time = 0.0
-        self.break_timer_job: str | None = None
+        self.wheel_pause_active = False
+        self.wheel_pause_end_time = 0.0
+        self.wheel_pause_job: str | None = None
+        self.heartbeat_pause_active = False
+        self.heartbeat_pause_end_time = 0.0
+        self.heartbeat_pause_job: str | None = None
         self.timer_job: str | None = None
         self.session_start_time: float | None = None
         self.jitter = 0.02
@@ -315,6 +318,16 @@ class WheelOfFortune:
 
             if lower == "reset":
                 modules["reset_timer"] = True
+                continue
+
+            pause_wheel_match = re.fullmatch(r"pause\s+wheel\s+(\d+)", lower)
+            if pause_wheel_match:
+                modules["pause_wheel"] = int(pause_wheel_match.group(1))
+                continue
+
+            pause_heartbeat_match = re.fullmatch(r"pause\s+heartbeat\s+(\d+)", lower)
+            if pause_heartbeat_match:
+                modules["pause_heartbeat"] = int(pause_heartbeat_match.group(1))
                 continue
 
         return modules
@@ -563,7 +576,7 @@ class WheelOfFortune:
         if not self.heartbeat_enabled_var.get():
             return
 
-        if self.break_active:
+        if self.heartbeat_pause_active:
             return
 
         filename = self.heartbeat_filename_for_bpm(self.display_bps_value())
@@ -649,7 +662,7 @@ class WheelOfFortune:
         self.cancel_auto_spin()
         if (
             self.auto_spin_var.get()
-            and not self.break_active
+            and not self.wheel_pause_active
             and not self.game_over
             and not self.spinning
         ):
@@ -760,7 +773,7 @@ class WheelOfFortune:
             return
         if self.game_over:
             return
-        if self.break_active:
+        if self.wheel_pause_active:
             return
         if not self.spinning:
             self.start_spin()
@@ -774,7 +787,7 @@ class WheelOfFortune:
         if self.game_over:
             self.status.config(text="Game over. Press Restart to play again.")
             return
-        if self.break_active:
+        if self.wheel_pause_active:
             return
         if self.spinning:
             return
@@ -854,7 +867,6 @@ class WheelOfFortune:
         lowered_winner = base_name.strip().lower()
         multiplier_match = re.fullmatch(r"(\d+)x", lowered_winner)
         multiplier_value = int(multiplier_match.group(1)) if multiplier_match else None
-        is_relax = lowered_winner == "relax"
         applied_multiplier = self.pending_multiplier
 
         display_winner = winner
@@ -954,15 +966,36 @@ class WheelOfFortune:
                     cooldown_index, display_winner
                 )
 
+        if not ended:
+            pause_heartbeat_seconds = (
+                int(modules.get("pause_heartbeat", 0))
+                if "pause_heartbeat" in modules
+                else 0
+            )
+            if pause_heartbeat_seconds > 0:
+                heartbeat_duration = pause_heartbeat_seconds * applied_multiplier
+                self.start_heartbeat_pause_timer(heartbeat_duration)
+                module_messages.append(
+                    f"Heartbeat paused for {heartbeat_duration} seconds."
+                )
+
+            pause_wheel_seconds = (
+                int(modules.get("pause_wheel", 0)) if "pause_wheel" in modules else 0
+            )
+            if pause_wheel_seconds > 0:
+                wheel_duration = pause_wheel_seconds * applied_multiplier
+                self.start_wheel_pause_timer(wheel_duration)
+                module_messages.append(
+                    f"Wheel paused for {wheel_duration} seconds."
+                )
+                if module_messages:
+                    message = f"{message} {' '.join(module_messages)}".strip()
+                return
+
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
 
         if ended:
-            return
-
-        if is_relax:
-            duration = 5 * applied_multiplier
-            self.start_relax_timer(duration)
             return
 
         self.status.config(text=message)
@@ -1061,39 +1094,65 @@ class WheelOfFortune:
         self.add_item_with_modules(base_name, modules, color)
         self.draw_wheel()
 
-    def start_relax_timer(self, duration: float) -> None:
-        self.break_active = True
-        self.break_end_time = time.perf_counter() + duration
+    def start_wheel_pause_timer(self, duration: float) -> None:
+        self.cancel_wheel_pause_timer()
+        self.wheel_pause_active = True
+        self.wheel_pause_end_time = time.perf_counter() + duration
         self.cancel_auto_spin()
-        self.update_relax_timer()
+        self.update_wheel_pause_timer()
 
-    def update_relax_timer(self) -> None:
-        remaining = self.break_end_time - time.perf_counter()
+    def update_wheel_pause_timer(self) -> None:
+        remaining = self.wheel_pause_end_time - time.perf_counter()
         if remaining <= 0:
-            self.break_active = False
-            self.break_timer_job = None
+            self.wheel_pause_active = False
+            self.wheel_pause_job = None
             if self.auto_spin_var.get():
-                self.status.config(text="Relax over. Spinning automatically.")
+                self.status.config(text="Wheel pause over. Spinning automatically.")
                 self.start_spin()
             else:
-                self.status.config(text="Relax over. Spinning automatically.")
+                self.status.config(text="Wheel pause over.")
             return
 
         seconds_left = max(1, math.ceil(remaining))
-        self.status.config(text=f"Relax: {seconds_left} seconds remaining.")
-        self.break_timer_job = self.root.after(200, self.update_relax_timer)
+        self.status.config(text=f"Wheel paused: {seconds_left} seconds remaining.")
+        self.wheel_pause_job = self.root.after(200, self.update_wheel_pause_timer)
+
+    def start_heartbeat_pause_timer(self, duration: float) -> None:
+        self.cancel_heartbeat_pause_timer()
+        self.heartbeat_pause_active = True
+        self.heartbeat_pause_end_time = time.perf_counter() + duration
+        self.update_heartbeat_pause_timer()
+
+    def update_heartbeat_pause_timer(self) -> None:
+        remaining = self.heartbeat_pause_end_time - time.perf_counter()
+        if remaining <= 0:
+            self.heartbeat_pause_active = False
+            self.heartbeat_pause_job = None
+            self.status.config(text="Heartbeat pause over.")
+            return
+
+        seconds_left = max(1, math.ceil(remaining))
+        self.status.config(text=f"Heartbeat paused: {seconds_left} seconds remaining.")
+        self.heartbeat_pause_job = self.root.after(200, self.update_heartbeat_pause_timer)
 
     def end_game(self, message: str) -> None:
         self.game_over = True
         self.cancel_auto_spin()
-        self.cancel_break_timer()
-        self.break_active = False
+        self.cancel_wheel_pause_timer()
+        self.cancel_heartbeat_pause_timer()
         self.status.config(text=message)
 
-    def cancel_break_timer(self) -> None:
-        if self.break_timer_job is not None:
-            self.root.after_cancel(self.break_timer_job)
-            self.break_timer_job = None
+    def cancel_wheel_pause_timer(self) -> None:
+        if self.wheel_pause_job is not None:
+            self.root.after_cancel(self.wheel_pause_job)
+            self.wheel_pause_job = None
+        self.wheel_pause_active = False
+
+    def cancel_heartbeat_pause_timer(self) -> None:
+        if self.heartbeat_pause_job is not None:
+            self.root.after_cancel(self.heartbeat_pause_job)
+            self.heartbeat_pause_job = None
+        self.heartbeat_pause_active = False
 
     def update_special_label(self, index: int) -> None:
         self.items[index] = self.format_item_label(index)
@@ -1128,7 +1187,8 @@ class WheelOfFortune:
     def restart_game(self) -> None:
         self.cancel_auto_spin()
         self.cancel_heartbeat()
-        self.cancel_break_timer()
+        self.cancel_wheel_pause_timer()
+        self.cancel_heartbeat_pause_timer()
         self.cancel_mercy_jobs()
         self.cancel_cooldown_jobs()
         self.items = list(self.original_items)
@@ -1141,8 +1201,10 @@ class WheelOfFortune:
         self.bps = self.initial_bps
         self.clamp_bps()
         self.angle_offset = 0.0
-        self.break_active = False
-        self.break_end_time = 0.0
+        self.wheel_pause_active = False
+        self.wheel_pause_end_time = 0.0
+        self.heartbeat_pause_active = False
+        self.heartbeat_pause_end_time = 0.0
         self.auto_spin_var.set(True)
         self.last_pointer_index = self.pointer_index()
         self.cancel_timer()
