@@ -1,4 +1,2 @@
-Red (+5)
-Blue (*1.1)
-Green (> 120) (Mercy 40 0) (Fragile)
-Yellow (> 110) (Mercy 0 30)
+2x
+Fuck You :D (*0.5) (Pause Wheel 5) (Pause Heartbeat 5)
