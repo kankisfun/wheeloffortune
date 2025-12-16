@@ -868,6 +868,7 @@ class WheelOfFortune:
             )
 
         if bpm_changed:
+            self.clamp_bps()
             self.update_bpm_display()
             self.schedule_heartbeat()
             self.apply_bps_conditions()
@@ -1117,6 +1118,7 @@ class WheelOfFortune:
         self.spinning = False
         self.pending_multiplier = 1
         self.bps = self.initial_bps
+        self.clamp_bps()
         self.angle_offset = 0.0
         self.break_active = False
         self.break_end_time = 0.0
@@ -1139,6 +1141,9 @@ class WheelOfFortune:
 
     def bpm_text(self) -> str:
         return f"BPM: {self.display_bps_value()}"
+
+    def clamp_bps(self) -> None:
+        self.bps = min(600, max(1, self.bps))
 
     def update_bpm_display(self) -> None:
         self.bpm_label.config(text=self.bpm_text())
