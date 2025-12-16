@@ -34,6 +34,10 @@ class WheelOfFortune:
         self.timer_label.config(text="Timer: 00:00")
         self.timer_label.pack(side="left")
 
+        self.session_timer_label = tk.Label(top_bar, font=("Arial", 12, "bold"))
+        self.session_timer_label.config(text="Session Timer: 00:00")
+        self.session_timer_label.pack(side="left", padx=(10, 0))
+
         self.bpm_label = tk.Label(top_bar, font=("Arial", 12, "bold"))
         self.bpm_label.pack(side="right")
 
@@ -96,6 +100,7 @@ class WheelOfFortune:
         self.break_end_time = 0.0
         self.break_timer_job: str | None = None
         self.timer_job: str | None = None
+        self.session_start_time: float | None = None
         self.jitter = 0.02
         self.initial_speed = 0.0
         self.deceleration = 0.0
@@ -673,12 +678,22 @@ class WheelOfFortune:
             self.timer_job = self.root.after(500, self.update_timer_label)
 
     def update_timer_label(self) -> None:
+        now = time.perf_counter()
         if self.first_spin_time is None:
             self.timer_label.config(text="Timer: 00:00")
         else:
-            elapsed = time.perf_counter() - self.first_spin_time
+            elapsed = now - self.first_spin_time
             minutes, seconds = divmod(int(elapsed), 60)
             self.timer_label.config(text=f"Timer: {minutes:02d}:{seconds:02d}")
+
+        if self.session_start_time is None:
+            self.session_timer_label.config(text="Session Timer: 00:00")
+        else:
+            session_elapsed = now - self.session_start_time
+            minutes, seconds = divmod(int(session_elapsed), 60)
+            self.session_timer_label.config(
+                text=f"Session Timer: {minutes:02d}:{seconds:02d}"
+            )
         self.apply_bps_conditions()
         self.timer_job = self.root.after(500, self.update_timer_label)
 
@@ -768,7 +783,13 @@ class WheelOfFortune:
             return
 
         if self.first_spin_time is None:
-            self.first_spin_time = time.perf_counter()
+            now = time.perf_counter()
+            if self.session_start_time is None:
+                self.session_start_time = now
+            self.first_spin_time = now
+            self.schedule_timer_update()
+        elif self.session_start_time is None:
+            self.session_start_time = time.perf_counter()
             self.schedule_timer_update()
 
         self.start_mercy_timers_if_needed()
@@ -1127,6 +1148,8 @@ class WheelOfFortune:
         self.cancel_timer()
         self.first_spin_time = None
         self.timer_label.config(text="Timer: 00:00")
+        if self.session_start_time is not None:
+            self.update_timer_label()
         self.draw_wheel()
         self.schedule_heartbeat()
         self.update_bpm_display()
