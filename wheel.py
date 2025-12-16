@@ -883,28 +883,36 @@ class WheelOfFortune:
 
         module_messages = []
         bpm_changed = False
+        applied_multiplier_value: float | None = None
+        applied_boost_value: int | None = None
         if "bpm_multiplier" in modules:
             multiplier = float(modules["bpm_multiplier"])
             total_multiplier = math.pow(multiplier, applied_multiplier)
             self.bps *= total_multiplier
             bpm_changed = True
-            module_messages.append(
-                f"BPM multiplied by {total_multiplier} to {self.display_bps_value()}."
-            )
+            applied_multiplier_value = total_multiplier
 
         if "bpm_boost" in modules:
             boost = modules["bpm_boost"] * applied_multiplier
             self.bps += boost
             bpm_changed = True
-            module_messages.append(
-                f"BPM increased by {boost} to {self.display_bps_value()}."
-            )
+            applied_boost_value = boost
 
         if bpm_changed:
             self.clamp_bps()
             self.update_bpm_display()
             self.schedule_heartbeat()
             self.apply_bps_conditions()
+
+            new_bpm_text = self.display_bps_value()
+            if applied_multiplier_value is not None:
+                module_messages.append(
+                    f"BPM multiplied by {applied_multiplier_value} to {new_bpm_text}."
+                )
+            if applied_boost_value is not None:
+                module_messages.append(
+                    f"BPM increased by {applied_boost_value} to {new_bpm_text}."
+                )
 
             if not self.items or not self.base_names:
                 self.end_game("All items were removed during the spin.")
