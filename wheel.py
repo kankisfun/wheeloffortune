@@ -115,9 +115,9 @@ class WheelOfFortune:
         self.click_sound = self.load_click_sound()
         self.heartbeat_sound = self.load_heartbeat_sound()
 
-        self.mercy_configs: list[dict[str, int | str]] = []
-        self.mercy_jobs: list[str] = []
-        self.mercy_started = False
+        self.spawn_configs: list[dict[str, int | str]] = []
+        self.spawn_jobs: list[str] = []
+        self.spawn_started = False
 
         self.cooldown_jobs: list[str] = []
 
@@ -188,7 +188,7 @@ class WheelOfFortune:
     def parse_items_and_modules(self) -> None:
         self.base_names.clear()
         self.item_modules.clear()
-        self.mercy_configs.clear()
+        self.spawn_configs.clear()
         self.special_targets_by_name.clear()
         self.special_counts_by_name.clear()
         self.max_targets_by_name.clear()
@@ -253,10 +253,10 @@ class WheelOfFortune:
         for module_text in module_texts:
             lower = module_text.lower()
 
-            mercy_match = re.fullmatch(r"mercy\s+(\d+)\s+(\d+)", lower)
-            if mercy_match:
-                modules["mercy_initial"] = int(mercy_match.group(1))
-                modules["mercy_repeat"] = int(mercy_match.group(2))
+            spawn_match = re.fullmatch(r"spawn\s+(\d+)\s+(\d+)", lower)
+            if spawn_match:
+                modules["spawn_initial"] = int(spawn_match.group(1))
+                modules["spawn_repeat"] = int(spawn_match.group(2))
                 continue
 
             target_match = re.fullmatch(r"1\s*/\s*(\d+)", lower)
@@ -370,13 +370,13 @@ class WheelOfFortune:
         modules: dict[str, int | bool | float | str],
         color: str | None,
     ) -> None:
-        if "mercy_initial" in modules and "mercy_repeat" in modules:
-            self.mercy_configs.append(
+        if "spawn_initial" in modules and "spawn_repeat" in modules:
+            self.spawn_configs.append(
                 {
                     "index": idx,
                     "base_name": base_name,
-                    "initial_delay": modules["mercy_initial"],
-                    "repeat_delay": modules["mercy_repeat"],
+                    "initial_delay": modules["spawn_initial"],
+                    "repeat_delay": modules["spawn_repeat"],
                     "color": color,
                     "modules": copy.deepcopy(modules),
                 }
@@ -409,7 +409,7 @@ class WheelOfFortune:
         base_name: str,
         modules: dict[str, int | bool | float | str],
         color: str | None = None,
-        register_mercy: bool = False,
+        register_spawn: bool = False,
     ) -> None:
         modules = copy.deepcopy(modules)
         if base_name in self.max_blocked_names:
@@ -443,16 +443,16 @@ class WheelOfFortune:
         self.items.append(self.format_item_label(new_index))
 
         if (
-            register_mercy
-            and "mercy_initial" in modules
-            and "mercy_repeat" in modules
+            register_spawn
+            and "spawn_initial" in modules
+            and "spawn_repeat" in modules
         ):
-            self.mercy_configs.append(
+            self.spawn_configs.append(
                 {
                     "index": new_index,
                     "base_name": base_name,
-                    "initial_delay": modules["mercy_initial"],
-                    "repeat_delay": modules["mercy_repeat"],
+                    "initial_delay": modules["spawn_initial"],
+                    "repeat_delay": modules["spawn_repeat"],
                     "color": color,
                     "modules": copy.deepcopy(modules),
                 }
@@ -489,7 +489,7 @@ class WheelOfFortune:
                 base_name,
                 copy.deepcopy(modules),
                 str(color) if color else None,
-                register_mercy=False,
+                register_spawn=False,
             )
             self.hidden_items.remove(record)
             added_any = True
@@ -721,13 +721,13 @@ class WheelOfFortune:
         self.update_timer_label()
         self.apply_bps_conditions()
 
-    def cancel_mercy_jobs(self) -> None:
-        for job in self.mercy_jobs:
+    def cancel_spawn_jobs(self) -> None:
+        for job in self.spawn_jobs:
             try:
                 self.root.after_cancel(job)
             except Exception:
                 pass
-        self.mercy_jobs.clear()
+        self.spawn_jobs.clear()
 
     def cancel_cooldown_jobs(self) -> None:
         for job in self.cooldown_jobs:
@@ -737,35 +737,35 @@ class WheelOfFortune:
                 pass
         self.cooldown_jobs.clear()
 
-    def start_mercy_timers_if_needed(self) -> None:
-        if self.mercy_started:
+    def start_spawn_timers_if_needed(self) -> None:
+        if self.spawn_started:
             return
 
-        self.mercy_started = True
-        self.schedule_mercy_items()
+        self.spawn_started = True
+        self.schedule_spawn_items()
 
-    def schedule_mercy_items(self) -> None:
-        self.cancel_mercy_jobs()
-        for config in self.mercy_configs:
+    def schedule_spawn_items(self) -> None:
+        self.cancel_spawn_jobs()
+        for config in self.spawn_configs:
             delay = config["initial_delay"] if config["initial_delay"] > 0 else config["repeat_delay"]
             if delay <= 0:
                 continue
             job = self.root.after(
                 int(delay * 1000),
-                lambda cfg=config: self.apply_mercy_effect(cfg),
+                lambda cfg=config: self.apply_spawn_effect(cfg),
             )
-            self.mercy_jobs.append(job)
+            self.spawn_jobs.append(job)
 
-    def apply_mercy_effect(self, config: dict[str, int | str]) -> None:
+    def apply_spawn_effect(self, config: dict[str, int | str]) -> None:
         repeat_delay = int(config["repeat_delay"])
-        self.duplicate_mercy_item(config)
+        self.duplicate_spawn_item(config)
 
         if repeat_delay > 0:
             job = self.root.after(
                 int(repeat_delay * 1000),
-                lambda cfg=config: self.apply_mercy_effect(cfg),
+                lambda cfg=config: self.apply_spawn_effect(cfg),
             )
-            self.mercy_jobs.append(job)
+            self.spawn_jobs.append(job)
 
     def auto_spin_tick(self) -> None:
         self.auto_spin_job = None
@@ -805,7 +805,7 @@ class WheelOfFortune:
             self.session_start_time = time.perf_counter()
             self.schedule_timer_update()
 
-        self.start_mercy_timers_if_needed()
+        self.start_spawn_timers_if_needed()
         self.spinning = True
         self.spin_start = time.perf_counter()
         self.last_update = self.spin_start
@@ -1185,7 +1185,7 @@ class WheelOfFortune:
         del self.colors[index]
         self.draw_wheel()
 
-    def duplicate_mercy_item(self, config: dict[str, int | str]) -> None:
+    def duplicate_spawn_item(self, config: dict[str, int | str]) -> None:
         base_name = str(config["base_name"])
         modules = config.get("modules", {})
         color = config.get("color")
@@ -1197,12 +1197,12 @@ class WheelOfFortune:
         self.cancel_heartbeat()
         self.cancel_wheel_pause_timer()
         self.cancel_heartbeat_pause_timer()
-        self.cancel_mercy_jobs()
+        self.cancel_spawn_jobs()
         self.cancel_cooldown_jobs()
         self.items = list(self.original_items)
         self.colors = self.generate_colors(len(self.items))
         self.parse_items_and_modules()
-        self.mercy_started = False
+        self.spawn_started = False
         self.game_over = False
         self.spinning = False
         self.pending_multiplier = 1
