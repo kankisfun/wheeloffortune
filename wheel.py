@@ -115,6 +115,7 @@ class WheelOfFortune:
         self.heartbeat_pause_active = False
         self.heartbeat_pause_end_time = 0.0
         self.heartbeat_pause_job: str | None = None
+        self.post_pause_reset_pending = False
         self.timer_job: str | None = None
         self.session_start_time: float | None = None
         self.jitter = 0.02
@@ -331,6 +332,10 @@ class WheelOfFortune:
 
             if lower == "reset":
                 modules["reset_timer"] = True
+                continue
+
+            if lower == "post pause reset":
+                modules["post_pause_reset"] = True
                 continue
 
             pause_wheel_match = re.fullmatch(r"pause\s+wheel\s+(\d+)", lower)
@@ -813,6 +818,12 @@ class WheelOfFortune:
         self.update_timer_label()
         self.apply_bps_conditions()
 
+    def stop_spin_timer(self) -> None:
+        self.cancel_timer()
+        self.first_spin_time = None
+        self.timer_label.config(text="Timer: 00:00")
+        self.apply_bps_conditions()
+
     def cancel_spawn_jobs(self) -> None:
         for job in self.spawn_jobs:
             try:
@@ -1070,9 +1081,12 @@ class WheelOfFortune:
                 if "pause_heartbeat" in modules
                 else 0
             )
+            post_pause_reset = bool(modules.get("post_pause_reset"))
             if pause_heartbeat_seconds > 0:
                 heartbeat_duration = pause_heartbeat_seconds * applied_multiplier
                 self.start_heartbeat_pause_timer(heartbeat_duration)
+                if post_pause_reset:
+                    self.post_pause_reset_pending = True
                 module_messages.append(
                     f"Heartbeat paused for {heartbeat_duration} seconds."
                 )
@@ -1083,6 +1097,8 @@ class WheelOfFortune:
             if pause_wheel_seconds > 0:
                 wheel_duration = pause_wheel_seconds * applied_multiplier
                 self.start_wheel_pause_timer(wheel_duration)
+                if post_pause_reset:
+                    self.post_pause_reset_pending = True
                 module_messages.append(
                     f"Wheel paused for {wheel_duration} seconds."
                 )
@@ -1199,16 +1215,31 @@ class WheelOfFortune:
         self.cancel_auto_spin()
         self.update_wheel_pause_timer()
 
+    def apply_post_pause_reset(self) -> bool:
+        if not self.post_pause_reset_pending:
+            return False
+
+        self.post_pause_reset_pending = False
+        self.stop_spin_timer()
+        return True
+
     def update_wheel_pause_timer(self) -> None:
         remaining = self.wheel_pause_end_time - time.perf_counter()
         if remaining <= 0:
             self.wheel_pause_active = False
             self.wheel_pause_job = None
+            timer_stopped = self.apply_post_pause_reset()
             if self.auto_spin_var.get():
-                self.status.config(text="Wheel pause over. Spinning automatically.")
+                status_text = "Wheel pause over. Spinning automatically."
+                if timer_stopped:
+                    status_text += " Timer stopped."
+                self.status.config(text=status_text)
                 self.start_spin()
             else:
-                self.status.config(text="Wheel pause over.")
+                status_text = "Wheel pause over."
+                if timer_stopped:
+                    status_text += " Timer stopped."
+                self.status.config(text=status_text)
             return
 
         seconds_left = max(1, math.ceil(remaining))
@@ -1226,7 +1257,11 @@ class WheelOfFortune:
         if remaining <= 0:
             self.heartbeat_pause_active = False
             self.heartbeat_pause_job = None
-            self.status.config(text="Heartbeat pause over.")
+            timer_stopped = self.apply_post_pause_reset()
+            status_text = "Heartbeat pause over."
+            if timer_stopped:
+                status_text += " Timer stopped."
+            self.status.config(text=status_text)
             return
 
         seconds_left = max(1, math.ceil(remaining))
