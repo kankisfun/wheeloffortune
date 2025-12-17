@@ -1031,6 +1031,9 @@ class WheelOfFortune:
         applied_multiplier = self.pending_multiplier
         is_special_multiplier = multiplier_value is not None
         bpm_effect_multiplier = applied_multiplier if applied_multiplier > 1 else 1
+        has_bpm_effect = "bpm_multiplier" in modules or "bpm_boost" in modules
+        if not has_bpm_effect:
+            bpm_effect_multiplier = 1
 
         display_winner = winner
         if applied_multiplier > 1:
@@ -1040,6 +1043,9 @@ class WheelOfFortune:
 
         if is_special_multiplier:
             self.pending_multiplier *= multiplier_value
+        else:
+            # Deplete any stored multiplier as soon as a non-multiplier choice resolves.
+            self.pending_multiplier = 1
 
         module_messages = []
         bpm_changed = False
@@ -1100,8 +1106,6 @@ class WheelOfFortune:
         ended, message = self.handle_special_result(
             base_name, display_winner, 1
         )
-        if not is_special_multiplier:
-            self.pending_multiplier = 1
 
         max_ended, max_message = self.handle_max_result(base_name, display_winner)
         if max_message:
