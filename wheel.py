@@ -382,6 +382,11 @@ class WheelOfFortune:
             return 0.0
         return time.perf_counter() - self.first_spin_time
 
+    def timer_display_value(self) -> str:
+        elapsed = int(self.current_timer_seconds())
+        minutes, seconds = divmod(elapsed, 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
     def is_item_allowed_by_timer(
         self, modules: dict[str, int | bool | float | str]
     ) -> bool:
@@ -1039,7 +1044,29 @@ class WheelOfFortune:
         if applied_multiplier > 1:
             display_winner = f"{applied_multiplier}x {winner}"
 
-        self.log_recent_selection(display_winner)
+        timer_reset_at: str | None = None
+        previous_bpm = self.display_bps_value()
+        final_bpm = previous_bpm
+        logged = False
+
+        def timer_log_text() -> str:
+            if timer_reset_at is not None:
+                return f"Timer has been reset at {timer_reset_at}"
+            return self.timer_display_value()
+
+        def bpm_log_text() -> str:
+            if final_bpm > previous_bpm:
+                return f"BPM increased to {final_bpm}"
+            if final_bpm < previous_bpm:
+                return f"BPM reduced to {final_bpm}"
+            return str(final_bpm)
+
+        def log_spin() -> None:
+            nonlocal logged
+            if logged:
+                return
+            self.log_recent_selection(display_winner, timer_log_text(), bpm_log_text())
+            logged = True
 
         if is_special_multiplier:
             self.pending_multiplier *= multiplier_value
@@ -1071,6 +1098,7 @@ class WheelOfFortune:
             self.apply_bps_conditions()
 
             new_bpm_text = self.display_bps_value()
+            final_bpm = new_bpm_text
             if applied_multiplier_value is not None:
                 module_messages.append(
                     f"BPM multiplied by {applied_multiplier_value} to {new_bpm_text}."
@@ -1082,6 +1110,7 @@ class WheelOfFortune:
 
             if not self.items or not self.base_names:
                 self.end_game("All items were removed during the spin.")
+                log_spin()
                 return
 
             index = self.pointer_index()
@@ -1100,6 +1129,7 @@ class WheelOfFortune:
             self.play_sound(self.sound_cache.get(filename))
 
         if modules.get("reset_timer"):
+            timer_reset_at = self.timer_display_value()
             self.reset_spin_timer()
             module_messages.append("Timer reset.")
 
@@ -1168,19 +1198,24 @@ class WheelOfFortune:
                 )
                 if module_messages:
                     message = f"{message} {' '.join(module_messages)}".strip()
+                log_spin()
                 return
 
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
 
         if ended:
+            log_spin()
             return
 
+        log_spin()
         self.status.config(text=message)
         self.schedule_auto_spin()
 
-    def log_recent_selection(self, selection: str) -> None:
-        print(f"Selected: {selection}")
+    def log_recent_selection(self, selection: str, timer_text: str, bpm_text: str) -> None:
+        print(f"1. Selected: {selection}")
+        print(f"2. {timer_text}")
+        print(f"3. {bpm_text}")
 
     def handle_special_result(
         self, base_name: str, display_winner: str, applied_multiplier: int = 1
