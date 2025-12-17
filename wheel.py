@@ -39,6 +39,7 @@ class WheelOfFortune:
 
         top_bar = tk.Frame(self.root)
         top_bar.pack(fill="x", padx=10, pady=(10, 0))
+        self.top_bar = top_bar
 
         self.timer_label = tk.Label(top_bar, font=("Arial", 12, "bold"))
         self.timer_label.config(text="Timer: 00:00")
@@ -67,8 +68,16 @@ class WheelOfFortune:
         self.heartbeat_enabled_var = tk.BooleanVar(value=True)
         bottom_bar = tk.Frame(self.root)
         bottom_bar.pack(fill="x", pady=5)
-        self.auto_spin_label = tk.Label(bottom_bar, text="Automatic spinning enabled")
-        self.auto_spin_label.pack(side="right", padx=10)
+        self.bottom_bar = bottom_bar
+
+        self.night_mode_var = tk.BooleanVar(value=False)
+        self.night_mode_toggle = tk.Checkbutton(
+            bottom_bar,
+            text="Night mode",
+            variable=self.night_mode_var,
+            command=self.toggle_night_mode,
+        )
+        self.night_mode_toggle.pack(side="right", padx=10)
 
         self.restart_button = tk.Button(
             bottom_bar,
@@ -91,6 +100,13 @@ class WheelOfFortune:
             command=self.toggle_heartbeat,
         )
         self.heartbeat_check.pack(side="left", padx=10)
+
+        self.default_bg = self.root.cget("bg")
+        self.default_canvas_bg = self.canvas.cget("bg")
+        self.default_label_fg = self.status.cget("fg")
+        self.default_button_bg = self.start_button.cget("bg")
+        self.default_button_fg = self.start_button.cget("fg")
+        self.default_selectcolor = self.heartbeat_check.cget("selectcolor")
 
         self.auto_spin_job: str | None = None
         self.heartbeat_poll_job: str | None = None
@@ -159,6 +175,7 @@ class WheelOfFortune:
         self.draw_wheel()
         self.last_pointer_index = self.pointer_index()
         self.schedule_heartbeat()
+        self.apply_theme()
 
     def prompt_for_items(self) -> list[str]:
         path = filedialog.askopenfilename(
@@ -660,7 +677,7 @@ class WheelOfFortune:
                 y,
                 text=label,
                 font=("Arial", 14, "bold"),
-                fill="white",
+                fill="black" if self.night_mode_var.get() else "white",
                 angle=angle,
             )
 
@@ -688,6 +705,49 @@ class WheelOfFortune:
             self.schedule_heartbeat()
         else:
             self.cancel_heartbeat()
+
+    def toggle_night_mode(self) -> None:
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        night_mode = self.night_mode_var.get()
+        bg = "black" if night_mode else self.default_bg
+        fg = "black" if night_mode else self.default_label_fg
+        button_bg = bg if night_mode else self.default_button_bg
+        button_fg = fg if night_mode else self.default_button_fg
+        select_color = bg if night_mode else self.default_selectcolor
+
+        for widget in (self.root, self.top_bar, self.bottom_bar):
+            widget.config(bg=bg)
+
+        self.canvas.config(bg="black" if night_mode else self.default_canvas_bg)
+
+        for label in [
+            self.timer_label,
+            self.session_timer_label,
+            self.bpm_label,
+            self.status,
+        ]:
+            label.config(bg=bg, fg=fg)
+
+        for button in [self.restart_button, self.start_button]:
+            button.config(
+                bg=button_bg,
+                fg=button_fg,
+                activebackground=button_bg,
+                activeforeground=button_fg,
+            )
+
+        for checkbutton in [self.heartbeat_check, self.night_mode_toggle]:
+            checkbutton.config(
+                bg=button_bg,
+                fg=button_fg,
+                activebackground=button_bg,
+                activeforeground=button_fg,
+                selectcolor=select_color,
+            )
+
+        self.draw_wheel()
 
     def schedule_auto_spin(self) -> None:
         self.cancel_auto_spin()
