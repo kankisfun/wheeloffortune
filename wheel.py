@@ -969,6 +969,8 @@ class WheelOfFortune:
         multiplier_match = re.fullmatch(r"(\d+)x", lowered_winner)
         multiplier_value = int(multiplier_match.group(1)) if multiplier_match else None
         applied_multiplier = self.pending_multiplier
+        is_special_multiplier = multiplier_value is not None
+        bpm_effect_multiplier = applied_multiplier if applied_multiplier > 1 else 1
 
         display_winner = winner
         if applied_multiplier > 1:
@@ -976,11 +978,8 @@ class WheelOfFortune:
 
         self.log_recent_selection(display_winner)
 
-        if multiplier_value is not None:
+        if is_special_multiplier:
             self.pending_multiplier *= multiplier_value
-            self.status.config(text=f"Result: {winner}.")
-            self.schedule_auto_spin()
-            return
 
         module_messages = []
         bpm_changed = False
@@ -988,13 +987,13 @@ class WheelOfFortune:
         applied_boost_value: int | None = None
         if "bpm_multiplier" in modules:
             multiplier = float(modules["bpm_multiplier"])
-            total_multiplier = math.pow(multiplier, applied_multiplier)
+            total_multiplier = math.pow(multiplier, bpm_effect_multiplier)
             self.bps *= total_multiplier
             bpm_changed = True
             applied_multiplier_value = total_multiplier
 
         if "bpm_boost" in modules:
-            boost = modules["bpm_boost"] * applied_multiplier
+            boost = modules["bpm_boost"] * bpm_effect_multiplier
             self.bps += boost
             bpm_changed = True
             applied_boost_value = boost
@@ -1039,9 +1038,10 @@ class WheelOfFortune:
             module_messages.append("Timer reset.")
 
         ended, message = self.handle_special_result(
-            base_name, display_winner, applied_multiplier
+            base_name, display_winner, 1
         )
-        self.pending_multiplier = 1
+        if not is_special_multiplier:
+            self.pending_multiplier = 1
 
         max_ended, max_message = self.handle_max_result(base_name, display_winner)
         if max_message:
@@ -1083,7 +1083,7 @@ class WheelOfFortune:
             )
             post_pause_reset = bool(modules.get("post_pause_reset"))
             if pause_heartbeat_seconds > 0:
-                heartbeat_duration = pause_heartbeat_seconds * applied_multiplier
+                heartbeat_duration = pause_heartbeat_seconds
                 self.start_heartbeat_pause_timer(heartbeat_duration)
                 if post_pause_reset:
                     self.post_pause_reset_pending = True
@@ -1095,7 +1095,7 @@ class WheelOfFortune:
                 int(modules.get("pause_wheel", 0)) if "pause_wheel" in modules else 0
             )
             if pause_wheel_seconds > 0:
-                wheel_duration = pause_wheel_seconds * applied_multiplier
+                wheel_duration = pause_wheel_seconds
                 self.start_wheel_pause_timer(wheel_duration)
                 if post_pause_reset:
                     self.post_pause_reset_pending = True
