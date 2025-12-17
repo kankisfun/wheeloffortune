@@ -135,6 +135,8 @@ class WheelOfFortune:
         self.game_over = False
         self.has_invalid_config = False
 
+        self.heartbeat_next_time: float | None = None
+
         self.parse_items_and_modules()
         if self.has_invalid_config:
             self.root.destroy()
@@ -144,7 +146,7 @@ class WheelOfFortune:
 
         self.draw_wheel()
         self.last_pointer_index = self.pointer_index()
-        self.schedule_heartbeat()
+        self.schedule_heartbeat(reset=True)
 
     def prompt_for_items(self) -> list[str]:
         path = filedialog.askopenfilename(
@@ -549,6 +551,9 @@ class WheelOfFortune:
             return "Heartbeat_90.wav"
         return "Heartbeat.wav"
 
+    def heartbeat_interval_seconds(self) -> float:
+        return 60.0 / max(1, self.bps)
+
     def play_sound(self, sound: object | None) -> None:
         if sound is None:
             return
@@ -654,7 +659,7 @@ class WheelOfFortune:
 
     def toggle_heartbeat(self) -> None:
         if self.heartbeat_enabled_var.get():
-            self.schedule_heartbeat()
+            self.schedule_heartbeat(reset=True)
         else:
             self.cancel_heartbeat()
 
@@ -668,13 +673,29 @@ class WheelOfFortune:
         ):
             self.auto_spin_job = self.root.after(300, self.auto_spin_tick)
 
-    def schedule_heartbeat(self) -> None:
+    def schedule_heartbeat(self, reset: bool = False) -> None:
         if self.heartbeat_job is not None:
+            self.root.after_cancel(self.heartbeat_job)
+            self.heartbeat_job = None
+
+        if not self.heartbeat_enabled_var.get():
             return
 
-        if self.heartbeat_enabled_var.get():
-            interval_ms = max(1, int(60000 / max(1, self.bps)))
-            self.heartbeat_job = self.root.after(interval_ms, self.heartbeat_tick)
+        interval = self.heartbeat_interval_seconds()
+        now = time.perf_counter()
+
+        if reset or self.heartbeat_next_time is None:
+            self.heartbeat_next_time = now + interval
+        else:
+            if self.heartbeat_next_time <= now:
+                self.heartbeat_next_time = now + interval
+            else:
+                max_next = now + interval
+                if self.heartbeat_next_time - now > interval:
+                    self.heartbeat_next_time = max_next
+
+        delay_ms = max(1, int((self.heartbeat_next_time - now) * 1000))
+        self.heartbeat_job = self.root.after(delay_ms, self.heartbeat_tick)
 
     def cancel_auto_spin(self) -> None:
         if self.auto_spin_job is not None:
@@ -685,6 +706,7 @@ class WheelOfFortune:
         if self.heartbeat_job is not None:
             self.root.after_cancel(self.heartbeat_job)
             self.heartbeat_job = None
+        self.heartbeat_next_time = None
 
     def schedule_timer_update(self) -> None:
         if self.timer_job is None:
@@ -780,7 +802,28 @@ class WheelOfFortune:
 
     def heartbeat_tick(self) -> None:
         self.heartbeat_job = None
-        self.play_heartbeat_sound()
+        if not self.heartbeat_enabled_var.get():
+            self.heartbeat_next_time = None
+            return
+
+        interval = self.heartbeat_interval_seconds()
+        now = time.perf_counter()
+
+        if self.heartbeat_next_time is None:
+            self.heartbeat_next_time = now
+
+        beats_to_play = 0
+        while self.heartbeat_next_time is not None and now >= self.heartbeat_next_time:
+            beats_to_play += 1
+            self.heartbeat_next_time += interval
+
+        if beats_to_play == 0:
+            beats_to_play = 1
+            self.heartbeat_next_time = now + interval
+
+        for _ in range(beats_to_play):
+            self.play_heartbeat_sound()
+
         self.schedule_heartbeat()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
@@ -1221,7 +1264,8 @@ class WheelOfFortune:
         if self.session_start_time is not None:
             self.update_timer_label()
         self.draw_wheel()
-        self.schedule_heartbeat()
+        self.heartbeat_next_time = None
+        self.schedule_heartbeat(reset=True)
         self.update_bpm_display()
         self.status.config(text="Press Start to spin")
 
