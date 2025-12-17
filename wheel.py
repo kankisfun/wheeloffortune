@@ -1,21 +1,31 @@
 import copy
+import importlib
+import importlib.util
 import math
+import queue
 import random
 import re
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
-try:
+if importlib.util.find_spec("simpleaudio") is not None:  # pragma: no cover - optional dependency
     import simpleaudio  # type: ignore
-except Exception:  # pragma: no cover - fallback for environments without simpleaudio
+else:  # pragma: no cover - fallback for environments without simpleaudio
     simpleaudio = None  # type: ignore
 
-try:
+if importlib.util.find_spec("winsound") is not None:  # pragma: no cover - optional dependency
     import winsound  # type: ignore
-except Exception:  # pragma: no cover - fallback for non-Windows platforms
+else:  # pragma: no cover - fallback for non-Windows platforms
     winsound = None  # type: ignore
+
+if importlib.util.find_spec("pygame") is not None:  # pragma: no cover - optional dependency
+    pygame = importlib.import_module("pygame")
+    pygame.mixer.init()
+else:  # pragma: no cover - fallback when pygame is unavailable
+    pygame = None  # type: ignore
 
 
 class WheelOfFortune:
@@ -83,7 +93,10 @@ class WheelOfFortune:
         self.heartbeat_check.pack(side="left", padx=10)
 
         self.auto_spin_job: str | None = None
-        self.heartbeat_job: str | None = None
+        self.heartbeat_poll_job: str | None = None
+        self.heartbeat_queue: queue.SimpleQueue[float] = queue.SimpleQueue()
+        self.heartbeat_stop_event = threading.Event()
+        self.heartbeat_thread: threading.Thread | None = None
 
         self.config_dir = Path(__file__).parent
         self.items = self.prompt_for_items()
@@ -517,6 +530,12 @@ class WheelOfFortune:
         if path is None:
             return None
 
+        if pygame is not None:
+            try:
+                return pygame.mixer.Sound(str(path))
+            except Exception:
+                return None
+
         if simpleaudio is not None:
             try:
                 return simpleaudio.WaveObject.from_wave_file(str(path))
@@ -551,6 +570,13 @@ class WheelOfFortune:
 
     def play_sound(self, sound: object | None) -> None:
         if sound is None:
+            return
+
+        if pygame is not None and hasattr(sound, "play"):
+            try:
+                sound.play()
+            except Exception:
+                pass
             return
 
         if simpleaudio is not None and hasattr(sound, "play"):
@@ -669,12 +695,76 @@ class WheelOfFortune:
             self.auto_spin_job = self.root.after(300, self.auto_spin_tick)
 
     def schedule_heartbeat(self) -> None:
-        if self.heartbeat_job is not None:
+        if not self.heartbeat_enabled_var.get():
             return
 
-        if self.heartbeat_enabled_var.get():
-            interval_ms = max(1, int(60000 / max(1, self.bps)))
-            self.heartbeat_job = self.root.after(interval_ms, self.heartbeat_tick)
+        self.start_heartbeat_worker()
+        self.ensure_heartbeat_polling()
+
+    def heartbeat_worker_running(self) -> bool:
+        return self.heartbeat_thread is not None and self.heartbeat_thread.is_alive()
+
+    def start_heartbeat_worker(self) -> None:
+        if self.heartbeat_worker_running():
+            return
+
+        self.heartbeat_stop_event.clear()
+        self.heartbeat_thread = threading.Thread(
+            target=self.heartbeat_worker, name="heartbeat-worker", daemon=True
+        )
+        self.heartbeat_thread.start()
+
+    def stop_heartbeat_worker(self) -> None:
+        self.heartbeat_stop_event.set()
+        if self.heartbeat_thread is not None:
+            self.heartbeat_thread.join(timeout=0.5)
+            if self.heartbeat_thread.is_alive():
+                return
+
+        self.heartbeat_thread = None
+        self.heartbeat_stop_event.clear()
+
+    def heartbeat_worker(self) -> None:
+        next_target = time.perf_counter()
+        lookahead = 0.003
+        while not self.heartbeat_stop_event.is_set():
+            bpm = max(1.0, float(self.bps))
+            interval = 60.0 / bpm
+            next_target = max(next_target + interval, time.perf_counter() + interval)
+
+            while not self.heartbeat_stop_event.is_set():
+                remaining = next_target - time.perf_counter()
+                if remaining <= 0:
+                    break
+                sleep_duration = remaining - lookahead
+                if sleep_duration > 0:
+                    self.heartbeat_stop_event.wait(timeout=min(sleep_duration, 0.05))
+                else:
+                    time.sleep(max(0.0, remaining))
+
+            if self.heartbeat_stop_event.is_set():
+                return
+
+            self.heartbeat_queue.put(time.perf_counter())
+
+    def ensure_heartbeat_polling(self) -> None:
+        if self.heartbeat_poll_job is None:
+            self.heartbeat_poll_job = self.root.after(1, self.poll_heartbeat_queue)
+
+    def poll_heartbeat_queue(self) -> None:
+        self.heartbeat_poll_job = None
+        processed = False
+        while True:
+            try:
+                self.heartbeat_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.heartbeat_tick()
+            processed = True
+
+        if self.heartbeat_enabled_var.get() and self.heartbeat_worker_running():
+            delay_ms = 1 if processed else 5
+            self.heartbeat_poll_job = self.root.after(delay_ms, self.poll_heartbeat_queue)
 
     def cancel_auto_spin(self) -> None:
         if self.auto_spin_job is not None:
@@ -682,9 +772,11 @@ class WheelOfFortune:
             self.auto_spin_job = None
 
     def cancel_heartbeat(self) -> None:
-        if self.heartbeat_job is not None:
-            self.root.after_cancel(self.heartbeat_job)
-            self.heartbeat_job = None
+        self.stop_heartbeat_worker()
+        if self.heartbeat_poll_job is not None:
+            self.root.after_cancel(self.heartbeat_poll_job)
+            self.heartbeat_poll_job = None
+        self.heartbeat_queue = queue.SimpleQueue()
 
     def schedule_timer_update(self) -> None:
         if self.timer_job is None:
@@ -779,9 +871,7 @@ class WheelOfFortune:
             self.start_spin()
 
     def heartbeat_tick(self) -> None:
-        self.heartbeat_job = None
         self.play_heartbeat_sound()
-        self.schedule_heartbeat()
 
     def start_spin(self, event: tk.Event | None = None) -> None:
         if self.game_over:
