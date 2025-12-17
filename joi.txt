@@ -1,6 +1,6 @@
 Nothing :)
 2x
-Long Breath (*0.75) (Pause Wheel 30) (longbreath.wav) (Spawn 120 0) (Cooldown 120) (Max 2) (Reset)
+Long Breath (Missing) (Spawn 120 0) (*0.75) (Pause Wheel 30) (longbreath.wav) (Cooldown 120) (Max 2) (Reset)
 Speed Up (+6)
 Faster (*1.05)
 Short Breath (Cooldown 30) (breath.wav) (Reset)
