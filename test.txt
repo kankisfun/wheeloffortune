@@ -1,2 +1,3 @@
-Red (+100)
-Blue (+100)
+Red (+100) 
+Green (Cooldown 10)
+2x (Cooldown 10)
