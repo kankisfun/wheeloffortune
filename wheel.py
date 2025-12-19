@@ -1149,7 +1149,7 @@ class WheelOfFortune:
             )
 
         if "fragile" in modules and not ended and not reached_max:
-            message = self.handle_fragile_result(index, display_winner)
+            message = self.handle_fragile_result(index, base_name, display_winner)
             ended = self.game_over
 
         if (
@@ -1390,8 +1390,19 @@ class WheelOfFortune:
         self.items[index] = self.format_item_label(index)
         self.draw_wheel()
 
-    def handle_fragile_result(self, index: int, display_winner: str) -> str:
-        self.remove_item(index)
+    def handle_fragile_result(self, index: int, base_name: str, display_winner: str) -> str:
+        remove_index = None
+        if 0 <= index < len(self.base_names) and self.base_names[index] == base_name:
+            remove_index = index
+        else:
+            candidates = [
+                idx for idx, name in enumerate(self.base_names) if name == base_name
+            ]
+            if candidates:
+                remove_index = min(candidates, key=lambda idx: abs(idx - index))
+
+        if remove_index is not None:
+            self.remove_item(remove_index)
         if not self.items:
             end_message = f"{display_winner} was destroyed. No items remain."
             self.end_game(end_message)
