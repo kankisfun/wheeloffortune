@@ -925,6 +925,10 @@ class WheelOfFortune:
             self.spawn_jobs.append(job)
 
     def apply_spawn_effect(self, config: dict[str, int | str]) -> None:
+        base_name = str(config["base_name"])
+        if base_name in self.max_blocked_names:
+            return
+
         repeat_delay = int(config["repeat_delay"])
         self.duplicate_spawn_item(config)
 
@@ -1030,6 +1034,10 @@ class WheelOfFortune:
         winner = self.items[index]
         base_name = self.base_names[index]
         modules = self.item_modules[index]
+        selected_index = index
+        selected_winner = winner
+        selected_base_name = base_name
+        selected_modules = copy.deepcopy(modules)
         lowered_winner = base_name.strip().lower()
         multiplier_match = re.fullmatch(r"(\d+)x", lowered_winner)
         multiplier_value = int(multiplier_match.group(1)) if multiplier_match else None
@@ -1040,9 +1048,9 @@ class WheelOfFortune:
         if not has_bpm_effect:
             bpm_effect_multiplier = 1
 
-        display_winner = winner
+        display_winner = selected_winner
         if applied_multiplier > 1:
-            display_winner = f"{applied_multiplier}x {winner}"
+            display_winner = f"{applied_multiplier}x {selected_winner}"
 
         timer_reset_at: str | None = None
         previous_bpm = self.display_bps_value()
@@ -1078,15 +1086,15 @@ class WheelOfFortune:
         bpm_changed = False
         applied_multiplier_value: float | None = None
         applied_boost_value: int | None = None
-        if "bpm_multiplier" in modules:
-            multiplier = float(modules["bpm_multiplier"])
+        if "bpm_multiplier" in selected_modules:
+            multiplier = float(selected_modules["bpm_multiplier"])
             total_multiplier = math.pow(multiplier, bpm_effect_multiplier)
             self.bps *= total_multiplier
             bpm_changed = True
             applied_multiplier_value = total_multiplier
 
-        if "bpm_boost" in modules:
-            boost = modules["bpm_boost"] * bpm_effect_multiplier
+        if "bpm_boost" in selected_modules:
+            boost = selected_modules["bpm_boost"] * bpm_effect_multiplier
             self.bps += boost
             bpm_changed = True
             applied_boost_value = boost
@@ -1108,59 +1116,47 @@ class WheelOfFortune:
                     f"BPM increased by {applied_boost_value} to {new_bpm_text}."
                 )
 
-            if not self.items or not self.base_names:
-                self.end_game("All items were removed during the spin.")
-                log_spin()
-                return
-
-            index = self.pointer_index()
-            if index >= len(self.base_names):
-                index = len(self.base_names) - 1
-
-            self.last_pointer_index = index
-            winner = self.items[index]
-            base_name = self.base_names[index]
-            modules = self.item_modules[index]
-
-        if "sound_effect" in modules:
-            filename = str(modules["sound_effect"])
+        if "sound_effect" in selected_modules:
+            filename = str(selected_modules["sound_effect"])
             if filename not in self.sound_cache:
                 self.sound_cache[filename] = self.load_sound_file(filename)
             self.play_sound(self.sound_cache.get(filename))
 
-        if modules.get("reset_timer"):
+        if selected_modules.get("reset_timer"):
             timer_reset_at = self.timer_display_value()
             self.reset_spin_timer()
             module_messages.append("Timer reset.")
 
         ended, message = self.handle_special_result(
-            base_name, display_winner, 1
+            selected_base_name, display_winner, 1
         )
 
-        max_ended, max_message = self.handle_max_result(base_name, display_winner)
+        max_ended, max_message = self.handle_max_result(selected_base_name, display_winner)
         if max_message:
             message = max_message
         ended = ended or max_ended
         reached_max = False
-        if base_name in self.max_targets_by_name:
+        if selected_base_name in self.max_targets_by_name:
             reached_max = (
-                self.max_counts_by_name.get(base_name, 0)
-                >= self.max_targets_by_name.get(base_name, 0)
+                self.max_counts_by_name.get(selected_base_name, 0)
+                >= self.max_targets_by_name.get(selected_base_name, 0)
             )
 
-        if "fragile" in modules and not ended and not reached_max:
-            message = self.handle_fragile_result(index, base_name, display_winner)
+        if "fragile" in selected_modules and not ended and not reached_max:
+            message = self.handle_fragile_result(
+                selected_index, selected_base_name, display_winner
+            )
             ended = self.game_over
 
         if (
-            "cooldown" in modules
+            "cooldown" in selected_modules
             and not ended
-            and base_name not in self.max_blocked_names
+            and selected_base_name not in self.max_blocked_names
             and not reached_max
         ):
             cooldown_index = None
             for idx, name in enumerate(self.base_names):
-                if name == base_name:
+                if name == selected_base_name:
                     cooldown_index = idx
                     break
 
@@ -1171,11 +1167,11 @@ class WheelOfFortune:
 
         if not ended:
             pause_heartbeat_seconds = (
-                int(modules.get("pause_heartbeat", 0))
-                if "pause_heartbeat" in modules
+                int(selected_modules.get("pause_heartbeat", 0))
+                if "pause_heartbeat" in selected_modules
                 else 0
             )
-            post_pause_reset = bool(modules.get("post_pause_reset"))
+            post_pause_reset = bool(selected_modules.get("post_pause_reset"))
             if pause_heartbeat_seconds > 0:
                 heartbeat_duration = pause_heartbeat_seconds
                 self.start_heartbeat_pause_timer(heartbeat_duration)
@@ -1186,7 +1182,9 @@ class WheelOfFortune:
                 )
 
             pause_wheel_seconds = (
-                int(modules.get("pause_wheel", 0)) if "pause_wheel" in modules else 0
+                int(selected_modules.get("pause_wheel", 0))
+                if "pause_wheel" in selected_modules
+                else 0
             )
             if pause_wheel_seconds > 0:
                 wheel_duration = pause_wheel_seconds
@@ -1203,6 +1201,11 @@ class WheelOfFortune:
 
         if module_messages:
             message = f"{message} {' '.join(module_messages)}".strip()
+
+        if not ended and not self.items:
+            message = "All items were removed during the spin."
+            self.end_game(message)
+            ended = True
 
         if ended:
             log_spin()
@@ -1244,7 +1247,18 @@ class WheelOfFortune:
             if self.base_names[idx] == base_name:
                 removed += 1
                 self.remove_item(idx)
-        return removed
+        hidden_removed = 0
+        new_hidden_items = []
+        for record in self.hidden_items:
+            if record.get("base_name") == base_name:
+                hidden_removed += 1
+            else:
+                new_hidden_items.append(record)
+        self.hidden_items = new_hidden_items
+        self.spawn_configs = [
+            cfg for cfg in self.spawn_configs if cfg.get("base_name") != base_name
+        ]
+        return removed + hidden_removed
 
     def handle_max_result(self, base_name: str, display_winner: str) -> tuple[bool, str | None]:
         if base_name not in self.max_targets_by_name:
@@ -1422,6 +1436,9 @@ class WheelOfFortune:
 
     def duplicate_spawn_item(self, config: dict[str, int | str]) -> None:
         base_name = str(config["base_name"])
+        if base_name in self.max_blocked_names:
+            return
+
         modules = config.get("modules", {})
         color = config.get("color")
         self.add_item_with_modules(base_name, dict(modules), str(color) if color else None)
